@@ -169,11 +169,13 @@ if [ -n "$cwd" ]; then
     if [ -n "$git_branch" ]; then
         out+="${arrow}🌿 ${green}${git_branch}${reset}"
         # Git 異動狀態 [+2|-1] — pure bash sum
+        # `timeout 3` caps wall-clock on huge repos; `head -n 200` bounds output
+        # so SIGPIPE breaks the diff scan early. Both prevent prompt-render DoS.
         _added=0; _deleted=0
         while read -r _a _d _; do
             [[ "$_a" =~ ^[0-9]+$ ]] && _added=$((_added + _a))
             [[ "$_d" =~ ^[0-9]+$ ]] && _deleted=$((_deleted + _d))
-        done < <(git -C "${cwd}" diff --numstat 2>/dev/null)
+        done < <(timeout 3 git -C "${cwd}" diff --numstat 2>/dev/null | head -n 200)
         if [ $((_added + _deleted)) -gt 0 ]; then
             out+=" ${dim}[${green}+${_added}${dim}|${red}-${_deleted}${dim}]${reset}"
         fi
@@ -209,7 +211,9 @@ get_oauth_token() {
             local dir_hash=$(echo -n "$CLAUDE_CONFIG_DIR" | shasum -a 256 | cut -c1-8)
             keychain_svc="Claude Code-credentials-${dir_hash}"
         fi
-        local blob=$(security find-generic-password -s "$keychain_svc" -w 2>/dev/null)
+        # timeout 3 prevents indefinite stall if the keychain is locked and
+        # would otherwise pop a GUI prompt (matches secret-tool below).
+        local blob=$(timeout 3 security find-generic-password -s "$keychain_svc" -w 2>/dev/null)
         if [ -n "$blob" ]; then
             token=$(echo "$blob" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
             if [ -n "$token" ] && [ "$token" != "null" ]; then echo "$token"; return 0; fi
@@ -265,25 +269,36 @@ if ! $use_builtin; then
         if [ "$cache_age" -lt "$cache_max_age" ]; then needs_refresh=false; fi
         usage_data=$(< "$cache_file")
     fi
+    # mkdir is atomic on POSIX → use as lock. If another process is already
+    # refreshing, skip the network call and use whatever we have (possibly stale).
+    # Lock dir auto-cleared if older than 30s in case a previous run crashed.
+    _lock="${cache_file}.lock"
     if $needs_refresh; then
-        token=$(get_oauth_token)
-        if [ -n "$token" ] && [ "$token" != "null" ]; then
-            # Pass Authorization header via stdin --config to keep token out of argv
-            # (visible in ps/proc otherwise). Other headers stay in argv since they're
-            # not secrets. --connect-timeout caps DNS/TCP stalls separately.
-            response=$(printf 'header = "Authorization: Bearer %s"\n' "$token" \
-                | curl -s --config - \
-                    --max-time 10 \
-                    --connect-timeout 3 \
-                    -H "Accept: application/json" \
-                    -H "Content-Type: application/json" \
-                    -H "anthropic-beta: oauth-2025-04-20" \
-                    -H "User-Agent: claude-code/2.1.34" \
-                    "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
-            if [ -n "$response" ] && echo "$response" | jq -e '.five_hour' >/dev/null 2>&1; then
-                usage_data="$response"
-                _atomic_write "$cache_file" "$response"
+        if [ -d "$_lock" ]; then
+            _lock_mtime=$(stat -c %Y "$_lock" 2>/dev/null || stat -f %m "$_lock" 2>/dev/null || echo 0)
+            [ $(( now - ${_lock_mtime:-0} )) -gt 30 ] && rmdir "$_lock" 2>/dev/null
+        fi
+        if mkdir "$_lock" 2>/dev/null; then
+            token=$(get_oauth_token)
+            if [ -n "$token" ] && [ "$token" != "null" ]; then
+                # Pass Authorization header via stdin --config to keep token out
+                # of argv (visible in ps/proc otherwise). --connect-timeout caps
+                # DNS/TCP stalls separately from total --max-time budget.
+                response=$(printf 'header = "Authorization: Bearer %s"\n' "$token" \
+                    | curl -s --config - \
+                        --max-time 10 \
+                        --connect-timeout 3 \
+                        -H "Accept: application/json" \
+                        -H "Content-Type: application/json" \
+                        -H "anthropic-beta: oauth-2025-04-20" \
+                        -H "User-Agent: claude-code/2.1.34" \
+                        "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
+                if [ -n "$response" ] && echo "$response" | jq -e '.five_hour' >/dev/null 2>&1; then
+                    usage_data="$response"
+                    _atomic_write "$cache_file" "$response"
+                fi
             fi
+            rmdir "$_lock" 2>/dev/null
         fi
     fi
 fi
@@ -522,7 +537,9 @@ shopt -s extglob
 clean_out=${out//$'\033'\[*([0-9;])[a-zA-Z]/}
 clean_limit=${limit_block//$'\033'\[*([0-9;])[a-zA-Z]/}
 
-term_width=${COLUMNS:-100}
+# Validate COLUMNS as positive integer; fall back to 100 otherwise.
+# Prevents `[ -gt "wide" ]` style errors leaking to stderr.
+if [[ "$COLUMNS" =~ ^[1-9][0-9]*$ ]]; then term_width=$COLUMNS; else term_width=100; fi
 total_visual_len=$((${#clean_out} + ${#clean_limit} + 5))
 
 final_output=""
@@ -550,12 +567,23 @@ if [ -f "$version_cache_file" ]; then
 fi
 
 if $version_needs_refresh; then
-    vc_response=$(curl -s --max-time 5 --connect-timeout 3 \
-        -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/repos/gn00678465/StatusLine/releases/latest" 2>/dev/null)
-    if [ -n "$vc_response" ] && echo "$vc_response" | jq -e '.tag_name' >/dev/null 2>&1; then
-        version_data="$vc_response"
-        _atomic_write "$version_cache_file" "$vc_response"
+    _vlock="${version_cache_file}.lock"
+    if [ -d "$_vlock" ]; then
+        _vlock_mtime=$(stat -c %Y "$_vlock" 2>/dev/null || stat -f %m "$_vlock" 2>/dev/null || echo 0)
+        [ $(( now - ${_vlock_mtime:-0} )) -gt 30 ] && rmdir "$_vlock" 2>/dev/null
+    fi
+    if mkdir "$_vlock" 2>/dev/null; then
+        vc_response=$(curl -s --max-time 5 --connect-timeout 3 \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/gn00678465/StatusLine/releases/latest" 2>/dev/null)
+        # Cache any non-empty response (including 404/rate-limit error JSON).
+        # Otherwise we hit the API every prompt redraw when no release exists yet
+        # or when rate-limited. `tag_name` extraction below handles missing field.
+        if [ -n "$vc_response" ]; then
+            version_data="$vc_response"
+            _atomic_write "$version_cache_file" "$vc_response"
+        fi
+        rmdir "$_vlock" 2>/dev/null
     fi
 fi
 

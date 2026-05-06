@@ -8,7 +8,15 @@
 
 ## [Unreleased]
 
-<!-- 在這裡記錄尚未發布的變更，發版時再移到對應版本 section -->
+### Security
+
+接續 v1.1.1 修補剩餘 Medium / Low 等級問題：
+
+- **MED** TOCTOU race：cache refresh 加 `mkdir` atomic lock，避免多個 prompt 並發時重複打 API + 寫入競態。lock 超過 30s 視為前一輪 crash 自動清除
+- **MED** `git diff --numstat` 在大型 repo 上無上限，可被當 prompt-render DoS 觸發。加 `timeout 3` + `head -n 200` 雙重界限
+- **LOW** `COLUMNS` 未驗證為正整數，非數字值（如 `COLUMNS=wide`）會讓 `[ -gt ... ]` 噴錯到 stderr。改用 regex `^[1-9][0-9]*$` 嚴格驗證
+- **LOW** macOS `security find-generic-password` 沒有 timeout，keychain 鎖死時會無限阻塞 prompt。加 `timeout 3`，與 `secret-tool` 一致
+- 修正 version cache 在 GitHub API 回 404／rate-limit 時不會被快取的問題（每次 prompt 都重打 API ~5s）。改成只要 response 非空就 cache，`tag_name` 抽取容忍缺欄位
 
 ## [v1.1.1] - 2026-05-06
 
