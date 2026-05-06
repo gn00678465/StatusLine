@@ -12,22 +12,40 @@
 
 ### Security
 
-第二輪 copilot 安全審查（gpt-5.4 + gpt-5.4 sub-reviewer 交叉檢查，避開 Claude review Claude）發現的剩餘問題：
+合併三輪 copilot 安全審查的修補。第三輪由 gpt-5.4 + gpt-5.4 sub-reviewer 確認 R1+R2 修補有效，並抓出 R2 cache_dir fix 的兩個邏輯瑕疵：
 
-- **MED** `cache_dir` parent bootstrap 可被本機攻擊者預先放置 symlink 劫持。改成優先使用 `$XDG_RUNTIME_DIR / $HOME/.cache/StatusLine`（user-owned），對 cache_dir 加上 `-L` symlink 檢查、`-O` ownership 檢查、`-d` directory 檢查；任一失敗 `_cache_safe=false`，跳過所有寫入回退到無快取模式
-- **MED** `effort_level` 從 `CLAUDE_CODE_EFFORT_LEVEL` env / `settings.json` 取出後未經 sanitize 直接輸出。`printf %s` 不擋 raw ESC bytes（攻擊者可在 env 直接放真實 ESC byte）。改成 `tr -d '\000-\037\177'` + `[^a-zA-Z]` whitelist + 16 字元截斷
-- **LOW** `safe_str` 擴充含 BiDi/zero-width Unicode 控制字元範圍：`​-‏`（zero-width）、`‪-‮`（顯式 BiDi）、`⁦-⁩`（隔離 BiDi）、`﻿`（BOM）。防止視覺欺騙
+**Round 2 → Round 3 修補的 R2 fix 缺陷：**
 
-### Changed
+- **MED** `cache_dir` 驗證順序錯誤：原本 R2 fix 是 `mkdir -p` / `chmod 700` 之後才驗證 `-L`/`-O`/`-d`。攻擊者預先 symlink 該路徑時，`chmod` 會 follow symlink 到 victim 檔案。R3 修補：先驗證 `_cache_base`（HOME / XDG_RUNTIME_DIR）必須是 user-owned 真目錄，**通過後**才 `mkdir` 子目錄；mkdir 後再驗一次（防 mkdir 過程被搶）
+- **MED** `_cache_safe=false` 沒有真的 fail-closed：原本只擋 `_atomic_write`，但腳本仍從 `cache_dir` 讀 cache 檔（接收攻擊者餵的假內容）+ 建 `*.lock` 目錄（暴露活動）。R3 修補：**所有** disk read、lock create/remove、stat 操作都 gate 在 `_cache_safe`；不安全時 `cache_dir` 設為 `/dev/null` 防呆，所有 cache 路徑變成記憶體 only
 
-- `_atomic_write` 偵測 `_cache_safe=false` 時直接 return 1，不嘗試寫入；失敗時清理殘留 mktemp 檔
-- 新增 `[v1.1.2] - 2026-05-06` 合併以上 security follow-up + 從 v1.1.1 [Unreleased] 移過來的 medium/low 修補（TOCTOU lock、git diff timeout、COLUMNS 驗證、security timeout、version cache 寫入修正）
+**Round 2 修補（已確認有效）：**
+
+- `effort_level` 從 `CLAUDE_CODE_EFFORT_LEVEL` env / `settings.json` 取出後加 `tr -d '\000-\037\177'` + `[a-zA-Z]` whitelist + 16 字元截斷
+- `safe_str` 擴充含 BiDi/zero-width Unicode 控制字元範圍
+
+**Round 1 修補（已確認有效）：**
+
+- OAuth bearer token 不再透過 `curl -H "Authorization: Bearer $token"` 暴露在 process argv，改用 `printf ... | curl --config -` 從 stdin 讀 config（R3 子任務獨立驗證 curl config 解析，確認 token 含換行/引號也不會 inject directives）
+- JSON 數值欄位透過 `tonumber? // 0` + `_num()` 雙重驗證，杜絕 `$(( ... ))` recursive expansion 觸發 command substitution
+- 共享 `/tmp/claude/` 改成 per-user，所有 cache write 改用 `mktemp + mv` 原子替換
+- 字串欄位透過 jq `gsub` 移除控制字元
+- 最終輸出 `printf "%b"` → `printf "%s"`；ANSI 顏色用 `$'\033...'` 直接內嵌真實 ESC byte
+- `--connect-timeout 3` 限制 DNS / TCP stall
+- `cache_mtime` 雙 stat 失敗時 fallback 0
+- `latest_tag` 限制版號合法字元
+- `git diff --numstat` 加 `timeout 3` + `head -n 200`
+- `mkdir` atomic lock 防 cache refresh 並發競態
+- `COLUMNS` regex 驗證
+- macOS `security` 加 `timeout 3`
 
 ### Notes
 
-- 二輪 review 仍指出幾個 Low：`COLUMNS` 沒上限、無 SIGINT trap、依賴版本未檢查、Unicode `effort_level` 未進 jq sanitizer。其中 effort_level 已在本版修補；其餘 Low 留給後續 release，因為攻擊路徑都需要本機 + 特定環境配合，且修補成本與收益不成比例
+- **單機單用戶受信任 shell**：production-ready，可以 ship
+- **多用戶共享主機 hostile env**：經 R3 修補後，cache fallback 路徑也已 fail-closed，可以 ship
 - 升級不影響 settings.json
-- cache 位置從 `/tmp/claude-${UID}/` 移到 `${XDG_RUNTIME_DIR}/StatusLine` 或 `${HOME}/.cache/StatusLine`，舊檔案會被忽略；首次執行重建一次
+- cache 位置從 `/tmp/claude/` 移到 `${XDG_RUNTIME_DIR}/StatusLine` 或 `${HOME}/.cache/StatusLine`；首次執行重建
+- 暫不處理的 Low（R3 確認不升級到 Medium+）：`COLUMNS` 沒上限、無 SIGINT trap、bash 3.2 / GNU timeout / jq <1.6 相容性
 
 ## [v1.1.1] - 2026-05-06
 

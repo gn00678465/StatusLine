@@ -249,34 +249,45 @@ get_oauth_token() {
 use_builtin=false
 if [ -n "$builtin_five_hour_pct" ] || [ -n "$builtin_seven_day_pct" ]; then use_builtin=true; fi
 
-# Per-user cache dir. Prefer $XDG_RUNTIME_DIR / $HOME/.cache (already user-owned)
-# over /tmp/claude-${UID} (predictable, attacker can pre-plant symlink there).
-if [ -n "$XDG_RUNTIME_DIR" ] && [ -d "$XDG_RUNTIME_DIR" ]; then
-    cache_dir="${XDG_RUNTIME_DIR}/StatusLine"
+# Choose a per-user cache base. $HOME and $XDG_RUNTIME_DIR are user-owned by
+# spec; /tmp is shared and predictable, so we only fall through to it when the
+# others are unavailable, and that branch yields _cache_safe=false (no disk I/O).
+_cache_base=""
+if [ -n "$XDG_RUNTIME_DIR" ]; then
+    _cache_base="$XDG_RUNTIME_DIR"
 elif [ -n "$HOME" ]; then
-    cache_dir="${HOME}/.cache/StatusLine"
-else
-    _uid=${UID:-${EUID:-anon}}
-    _uid=${_uid//[^a-zA-Z0-9_-]/_}
-    cache_dir="/tmp/claude-${_uid}"
+    _cache_base="$HOME/.cache"
 fi
 
-umask 077
-mkdir -p "$cache_dir" 2>/dev/null
-chmod 700 "$cache_dir" 2>/dev/null
-
-# Refuse to use cache_dir if it's a symlink or owned by someone else.
-# `test -L` catches symlinks; `-O` catches foreign ownership.
-# On failure, fall back to in-memory only (skip caching, slower but safe).
-_cache_safe=true
-if [ -L "$cache_dir" ] || { [ -e "$cache_dir" ] && [ ! -O "$cache_dir" ]; } || [ ! -d "$cache_dir" ]; then
-    _cache_safe=false
+# Validate the base BEFORE creating anything underneath it. Reject symlinks,
+# foreign-owned dirs, and non-directories. Catching the parent up front
+# eliminates the TOCTOU window where chmod/mkdir on a pre-planted leaf could
+# follow a symlink to a victim file.
+_cache_safe=false
+if [ -n "$_cache_base" ] \
+   && [ ! -L "$_cache_base" ] \
+   && [ -d "$_cache_base" ] \
+   && [ -O "$_cache_base" ]; then
+    cache_dir="$_cache_base/StatusLine"
+    umask 077
+    # Create the leaf only after the parent is trusted. mkdir -p on an existing
+    # symlink leaf returns success — re-validate immediately after.
+    mkdir -p "$cache_dir" 2>/dev/null
+    if [ ! -L "$cache_dir" ] && [ -d "$cache_dir" ] && [ -O "$cache_dir" ]; then
+        chmod 700 "$cache_dir" 2>/dev/null
+        _cache_safe=true
+    fi
 fi
 
-# Atomic write helper: writes to mktemp + rename. mktemp creates with 0600
-# and is symlink-safe; subsequent rename within same directory is atomic.
-# Returns non-zero on failure so callers can react (currently log to stderr
-# and continue with stale cache rather than retrying loops).
+# When validation fails, point cache_dir at /dev/null so any path-based
+# operation that slipped past a _cache_safe gate degrades to a no-op rather
+# than touching whatever attacker-controlled path triggered the rejection.
+$_cache_safe || cache_dir="/dev/null"
+
+# Atomic write helper. Hard-gated on _cache_safe; mktemp creates with mode 0600
+# in the validated dir, and the same-directory rename is atomic and does not
+# follow symlinks for the create step. Returns non-zero on any failure so
+# callers can fall back to in-memory only.
 _atomic_write() {
     $_cache_safe || return 1
     local target=$1 content=$2
@@ -299,22 +310,27 @@ needs_refresh=true
 usage_data=""
 
 if ! $use_builtin; then
-    if [ -f "$cache_file" ] && [ -s "$cache_file" ]; then
+    # All disk reads and lock ops require a validated cache_dir. When
+    # _cache_safe is false, we fetch fresh from the network with no caching
+    # rather than touch the unvalidated path.
+    if $_cache_safe && [ -f "$cache_file" ] && [ -s "$cache_file" ]; then
         cache_mtime=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0)
         cache_age=$(( now - ${cache_mtime:-0} ))
         if [ "$cache_age" -lt "$cache_max_age" ]; then needs_refresh=false; fi
         usage_data=$(< "$cache_file")
     fi
-    # mkdir is atomic on POSIX → use as lock. If another process is already
-    # refreshing, skip the network call and use whatever we have (possibly stale).
-    # Lock dir auto-cleared if older than 30s in case a previous run crashed.
+    # mkdir is atomic on POSIX → use as lock. Skip locking entirely when
+    # _cache_safe is false (the lock dir would land in an unvalidated path).
+    # Stale lock (>30s) auto-cleared in case a previous run crashed.
     _lock="${cache_file}.lock"
     if $needs_refresh; then
-        if [ -d "$_lock" ]; then
+        if $_cache_safe && [ -d "$_lock" ]; then
             _lock_mtime=$(stat -c %Y "$_lock" 2>/dev/null || stat -f %m "$_lock" 2>/dev/null || echo 0)
             [ $(( now - ${_lock_mtime:-0} )) -gt 30 ] && rmdir "$_lock" 2>/dev/null
         fi
-        if mkdir "$_lock" 2>/dev/null; then
+        # When unsafe, skip the lock and just fetch — we won't write the
+        # response anywhere anyway, so concurrent fetches only waste API calls.
+        if ! $_cache_safe || mkdir "$_lock" 2>/dev/null; then
             token=$(get_oauth_token)
             if [ -n "$token" ] && [ "$token" != "null" ]; then
                 # Pass Authorization header via stdin --config to keep token out
@@ -334,7 +350,7 @@ if ! $use_builtin; then
                     _atomic_write "$cache_file" "$response"
                 fi
             fi
-            rmdir "$_lock" 2>/dev/null
+            $_cache_safe && rmdir "$_lock" 2>/dev/null
         fi
     fi
 fi
@@ -380,7 +396,7 @@ signature="${input_tokens}:${cache_create}:${cache_read}"
 state_started_at=""
 state_signature=""
 state_last_hit_rate=""
-if [ -f "$cache_ttl_file" ] && [ -s "$cache_ttl_file" ]; then
+if $_cache_safe && [ -f "$cache_ttl_file" ] && [ -s "$cache_ttl_file" ]; then
     # Single jq call: validate + extract all three fields, with control-char strip
     mapfile -t _state < <(jq -r '
         def safe_str: tostring | gsub("[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]"; "");
@@ -589,14 +605,15 @@ fi
 
 # ===== Update check =====
 # Per-user cache dir; latest_tag goes through safe_str + version-string regex
-# to prevent terminal escape injection from a tampered cache file.
+# to prevent terminal escape injection from a tampered cache file. All disk
+# reads, lock creation, and writes are gated on _cache_safe.
 version_cache_file="${cache_dir}/statusline-version-cache.json"
 version_cache_max_age=86400
 
 version_needs_refresh=true
 version_data=""
 
-if [ -f "$version_cache_file" ]; then
+if $_cache_safe && [ -f "$version_cache_file" ]; then
     vc_mtime=$(stat -c %Y "$version_cache_file" 2>/dev/null || stat -f %m "$version_cache_file" 2>/dev/null || echo 0)
     if [ $(( now - ${vc_mtime:-0} )) -lt "$version_cache_max_age" ]; then version_needs_refresh=false; fi
     [ -s "$version_cache_file" ] && version_data=$(< "$version_cache_file")
@@ -604,11 +621,13 @@ fi
 
 if $version_needs_refresh; then
     _vlock="${version_cache_file}.lock"
-    if [ -d "$_vlock" ]; then
+    if $_cache_safe && [ -d "$_vlock" ]; then
         _vlock_mtime=$(stat -c %Y "$_vlock" 2>/dev/null || stat -f %m "$_vlock" 2>/dev/null || echo 0)
         [ $(( now - ${_vlock_mtime:-0} )) -gt 30 ] && rmdir "$_vlock" 2>/dev/null
     fi
-    if mkdir "$_vlock" 2>/dev/null; then
+    # When unsafe, skip the lock and just fetch — we won't write the response
+    # anywhere, so concurrent fetches only waste API calls (no corruption risk).
+    if ! $_cache_safe || mkdir "$_vlock" 2>/dev/null; then
         vc_response=$(curl -s --max-time 5 --connect-timeout 3 \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/gn00678465/StatusLine/releases/latest" 2>/dev/null)
@@ -619,7 +638,7 @@ if $version_needs_refresh; then
             version_data="$vc_response"
             _atomic_write "$version_cache_file" "$vc_response"
         fi
-        rmdir "$_vlock" 2>/dev/null
+        $_cache_safe && rmdir "$_vlock" 2>/dev/null
     fi
 fi
 
