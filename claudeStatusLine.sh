@@ -249,34 +249,56 @@ get_oauth_token() {
 use_builtin=false
 if [ -n "$builtin_five_hour_pct" ] || [ -n "$builtin_seven_day_pct" ]; then use_builtin=true; fi
 
-# Choose a per-user cache base. $HOME and $XDG_RUNTIME_DIR are user-owned by
-# spec; /tmp is shared and predictable, so we only fall through to it when the
-# others are unavailable, and that branch yields _cache_safe=false (no disk I/O).
+# Returns 0 if $1 is a directory we trust on a hostile-host model:
+# real dir, owned by us, not a symlink, AND no group/other write bit set.
+# Owner-only checks (-O) miss the case where a writable parent lets a peer
+# swap our subdir; the mode check excludes 0??[2367] modes (group/other write).
+_dir_is_safe() {
+    [ -n "$1" ] || return 1
+    [ ! -L "$1" ] || return 1
+    [ -d "$1" ] || return 1
+    [ -O "$1" ] || return 1
+    local mode
+    mode=$(stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null) || return 1
+    # Last two octal digits cover group + other; bit 2 is write.
+    local last=${mode: -1} mid=${mode: -2:1}
+    [ -n "$last" ] && [ -n "$mid" ] || return 1
+    (( (last & 2) == 0 )) && (( (mid & 2) == 0 )) || return 1
+    return 0
+}
+
+# Choose a per-user cache base. $XDG_RUNTIME_DIR (per spec mode 0700) and
+# $HOME (typically 0755) are user-owned. /tmp is shared and predictable, so
+# we never fall through to it — _cache_safe stays false instead, disabling
+# all disk I/O.
 _cache_base=""
-if [ -n "$XDG_RUNTIME_DIR" ]; then
+if [ -n "$XDG_RUNTIME_DIR" ] && _dir_is_safe "$XDG_RUNTIME_DIR"; then
     _cache_base="$XDG_RUNTIME_DIR"
-elif [ -n "$HOME" ]; then
+elif [ -n "$HOME" ] && _dir_is_safe "$HOME/.cache"; then
     _cache_base="$HOME/.cache"
+elif [ -n "$HOME" ] && [ ! -e "$HOME/.cache" ] && _dir_is_safe "$HOME"; then
+    # $HOME/.cache doesn't exist yet but $HOME itself is safe — create the
+    # standard XDG cache dir under our umask. mkdir -p is symlink-safe for the
+    # *create* step (it errors on EEXIST symlinks); the post-create _dir_is_safe
+    # below catches the result.
+    umask 077
+    mkdir -p "$HOME/.cache" 2>/dev/null
+    _dir_is_safe "$HOME/.cache" && _cache_base="$HOME/.cache"
 fi
 
-# Validate the base BEFORE creating anything underneath it. Reject symlinks,
-# foreign-owned dirs, and non-directories. Catching the parent up front
-# eliminates the TOCTOU window where chmod/mkdir on a pre-planted leaf could
-# follow a symlink to a victim file.
+# Build the leaf only beneath a validated base. Use umask so the newly-created
+# leaf is 0700 from inception — this avoids any chmod-after-validation race
+# where an attacker could swap the path between validation and chmod.
 _cache_safe=false
-if [ -n "$_cache_base" ] \
-   && [ ! -L "$_cache_base" ] \
-   && [ -d "$_cache_base" ] \
-   && [ -O "$_cache_base" ]; then
+if [ -n "$_cache_base" ]; then
     cache_dir="$_cache_base/StatusLine"
     umask 077
-    # Create the leaf only after the parent is trusted. mkdir -p on an existing
-    # symlink leaf returns success — re-validate immediately after.
     mkdir -p "$cache_dir" 2>/dev/null
-    if [ ! -L "$cache_dir" ] && [ -d "$cache_dir" ] && [ -O "$cache_dir" ]; then
-        chmod 700 "$cache_dir" 2>/dev/null
-        _cache_safe=true
-    fi
+    # Validate the leaf AFTER mkdir; do NOT chmod afterwards. If the leaf
+    # already existed with weaker permissions (e.g. 0755 from a prior version),
+    # _dir_is_safe rejects it and we degrade to memory-only — safer than
+    # racing a chmod through any window the attacker can hit.
+    _dir_is_safe "$cache_dir" && _cache_safe=true
 fi
 
 # When validation fails, point cache_dir at /dev/null so any path-based
