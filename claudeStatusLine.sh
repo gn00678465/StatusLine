@@ -15,6 +15,7 @@ set -f  # disable globbing
 VERSION="1.0.0"
 
 input=$(cat)
+now=$(date +%s)
 
 if [ -z "$input" ]; then
     printf "Claude"
@@ -31,6 +32,8 @@ yellow='\033[38;2;255;230;80m'
 white='\033[38;2;240;240;240m'
 dim='\033[2m'
 reset='\033[0m'
+bright_red='\033[38;2;255;50;50m'
+gray='\033[38;2;140;140;140m'
 
 # Format token counts (e.g., 50k / 200k)
 format_tokens() {
@@ -264,8 +267,118 @@ format_reset_time() {
     [ -n "$formatted" ] && echo "$formatted"
 }
 
-# ===== 4. Rate Limits (加上進度條與 Context block 整合) =====
+# ===== 4. Cache 命中率 + TTL 倒計時 (排在 5h 之前) =====
+# 取得 session_id，若無則用 cwd 雜湊
+session_id=$(echo "$input" | jq -r '.session_id // empty')
+if [ -z "$session_id" ]; then
+    _cwd_raw=$(echo "$input" | jq -r '.cwd // empty')
+    session_id=$(echo -n "${_cwd_raw:-no-cwd}" | sha256sum 2>/dev/null | cut -c1-16 || echo -n "${_cwd_raw:-no-cwd}" | shasum -a 256 | cut -c1-16)
+fi
+session_hash=$(echo -n "$session_id" | sha256sum 2>/dev/null | cut -c1-16 || echo -n "$session_id" | shasum -a 256 | cut -c1-16)
+cache_ttl_file="/tmp/claude/cache-ttl-${session_hash}.json"
+
+signature="${input_tokens}:${cache_create}:${cache_read}"
+
+state_started_at=""
+state_signature=""
+state_last_hit_rate=""
+if [ -f "$cache_ttl_file" ] && [ -s "$cache_ttl_file" ]; then
+    _raw_state=$(cat "$cache_ttl_file" 2>/dev/null)
+    if echo "$_raw_state" | jq -e '.signature and .started_at' >/dev/null 2>&1; then
+        state_signature=$(echo "$_raw_state" | jq -r '.signature // empty')
+        state_started_at=$(echo "$_raw_state" | jq -r '.started_at // empty')
+        state_last_hit_rate=$(echo "$_raw_state" | jq -r '.last_hit_rate // empty')
+    fi
+fi
+
+has_usage=false
+( [ "$input_tokens" -gt 0 ] || [ "$cache_create" -gt 0 ] || [ "$cache_read" -gt 0 ] ) && has_usage=true
+
+hit_rate=""
+if $has_usage; then
+    _total_for_cache=$(( input_tokens + cache_create + cache_read ))
+    if [ "$_total_for_cache" -gt 0 ]; then
+        hit_rate=$(awk "BEGIN {printf \"%.0f\", $cache_read * 100 / $_total_for_cache}")
+    else
+        hit_rate="0"
+    fi
+fi
+
+new_started_at="$state_started_at"
+new_last_hit_rate="${state_last_hit_rate}"
+
+if $has_usage && [ "$signature" != "$state_signature" ]; then
+    new_started_at="$now"
+    new_last_hit_rate="$hit_rate"
+    printf '{"signature":"%s","started_at":%s,"last_hit_rate":"%s"}' \
+        "$signature" "$now" "$hit_rate" > "$cache_ttl_file"
+elif [ -z "$state_started_at" ] && ! $has_usage; then
+    :
+elif [ -z "$state_started_at" ] && $has_usage; then
+    new_started_at="$now"
+    new_last_hit_rate="$hit_rate"
+    printf '{"signature":"%s","started_at":%s,"last_hit_rate":"%s"}' \
+        "$signature" "$now" "$hit_rate" > "$cache_ttl_file"
+fi
+
+display_hit_rate="${hit_rate:-$new_last_hit_rate}"
+
+cache_block=""
+if [ -n "$new_started_at" ] && [ "$new_started_at" -gt 0 ] 2>/dev/null; then
+    _elapsed=$(( now - new_started_at ))
+    _ttl_total=3600
+    _remaining=$(( _ttl_total - _elapsed ))
+
+    if [ "$_remaining" -le 0 ]; then
+        ttl_str="exp"
+        ttl_color="$gray"
+    else
+        _min=$(( _remaining / 60 ))
+        _sec=$(( _remaining % 60 ))
+        ttl_str=$(printf "%d:%02d" "$_min" "$_sec")
+
+        if [ "$_remaining" -le 300 ]; then
+            if [ $(( now % 2 )) -eq 0 ]; then
+                ttl_color="$red"
+            else
+                ttl_color="$bright_red"
+            fi
+        elif [ "$_remaining" -le 1200 ]; then
+            ttl_color="$red"
+        elif [ "$_remaining" -le 2400 ]; then
+            ttl_color="$yellow"
+        else
+            ttl_color="$green"
+        fi
+    fi
+
+    if [ -n "$display_hit_rate" ]; then
+        _hr_num=$(printf "%.0f" "$display_hit_rate" 2>/dev/null || echo "0")
+        if [ "$_hr_num" -ge 50 ]; then
+            hr_color="$green"
+        else
+            hr_color="$gray"
+        fi
+        cache_block="${dim}Cache ${reset}${hr_color}${display_hit_rate}%${reset} ${ttl_color}${ttl_str}${reset}"
+    else
+        cache_block="${dim}Cache ${reset}${ttl_color}${ttl_str}${reset}"
+    fi
+elif [ -n "$display_hit_rate" ]; then
+    _hr_num=$(printf "%.0f" "$display_hit_rate" 2>/dev/null || echo "0")
+    if [ "$_hr_num" -ge 50 ]; then
+        hr_color="$green"
+    else
+        hr_color="$gray"
+    fi
+    cache_block="${dim}Cache ${reset}${hr_color}${display_hit_rate}%${reset}"
+fi
+
+# ===== 5. Rate Limits (加上進度條與 Context block 整合) =====
 limit_block="${context_block}"
+if [ -n "$cache_block" ]; then
+    [ -n "$limit_block" ] && limit_block+="${sep_sub}"
+    limit_block+="${cache_block}"
+fi
 
 if $use_builtin; then
     if [ -n "$builtin_five_hour_pct" ]; then
@@ -322,7 +435,7 @@ else
     limit_block+="${dim}5h: -${reset}${sep_sub}${dim}7d: -${reset}"
 fi
 
-# ===== 5. 動態折行處理 (Dynamic line break if too long) =====
+# ===== 6. 動態折行處理 (Dynamic line break if too long) =====
 # 剃除 ANSI 控制碼來計算真實長度
 clean_out=$(echo "$out" | sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g')
 clean_limit=$(echo "$limit_block" | sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g')
@@ -355,7 +468,7 @@ fi
 
 if $version_needs_refresh; then
     touch "$version_cache_file" 2>/dev/null
-    vc_response=$(curl -s --max-time 5 -H "Accept: application/vnd.github+json" "https://api.github.com/repos/daniel3303/ClaudeCodeStatusLine/releases/latest" 2>/dev/null)
+    vc_response=$(curl -s --max-time 5 -H "Accept: application/vnd.github+json" "https://api.github.com/repos/gn00678465/StatusLine/releases/latest" 2>/dev/null)
     if [ -n "$vc_response" ] && echo "$vc_response" | jq -e '.tag_name' >/dev/null 2>&1; then
         version_data="$vc_response"
         echo "$vc_response" > "$version_cache_file"
@@ -366,7 +479,7 @@ update_line=""
 if [ -n "$version_data" ]; then
     latest_tag=$(echo "$version_data" | jq -r '.tag_name // empty')
     if [ -n "$latest_tag" ] && version_gt "$latest_tag" "$VERSION"; then
-        update_line="\n${dim}Update available: ${latest_tag} → https://github.com/daniel3303/ClaudeCodeStatusLine${reset}"
+        update_line="\n${dim}Update available: ${latest_tag} → https://github.com/gn00678465/StatusLine${reset}"
     fi
 fi
 
