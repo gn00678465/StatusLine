@@ -10,6 +10,31 @@
 
 <!-- 在這裡記錄尚未發布的變更，發版時再移到對應版本 section -->
 
+## [v1.1.1] - 2026-05-06
+
+### Security
+
+依 Copilot CLI（GPT-5.4 + Claude sub-reviewer）安全審查報告修補三項主要問題：
+
+- **CRIT** OAuth bearer token 不再透過 `curl -H "Authorization: Bearer $token"` 暴露在 process argv（`/proc/<pid>/cmdline`、`ps auxww` 可見）。改用 `printf 'header = "Authorization: Bearer %s"' "$token" | curl --config -` 從 stdin 讀 config，token 永不進入 argv
+- **CRIT** Untrusted JSON 數值不再直接進入 bash arithmetic（`$(( ... ))` 對變數做 recursive expansion 包含 command substitution）。jq 端用 `tonumber? // 0` 強制成數字；shell 端用 `_num()` regex 驗證 `^[0-9]+$`，雙層 defense
+- **HIGH** 共享 `/tmp/claude/` 改成 per-user `/tmp/claude-${UID}/`（mode 700），杜絕本機 symlink 攻擊（攻擊者預先在共享目錄放 symlink 讓 `> file` 跟隨指向受害者檔案）。所有 cache / state 寫入改用 `mktemp + mv` 原子替換
+
+### Changed
+
+- **Hardening**：所有 user-controlled 字串欄位（`model.display_name`、`session_id`、`cwd`、`resets_at`）在 jq 端透過 `gsub("[\\u0000-\\u001f\\u007f]"; "")` 移除控制字元，杜絕 terminal escape 注入
+- **Hardening**：最終輸出從 `printf "%b"` 改成 `printf "%s"`；ANSI 顏色定義改用 `$'\033...'` 直接內嵌真實 ESC byte。user-controlled 字串中的 `\033`、`\xHH`、`\uHHHH` 不再被 printf 解譯
+- **Hardening**：`latest_tag` 額外用 `tr -dc 'a-zA-Z0-9.+-'` 限制為版號合法字元
+- 補上 `curl --connect-timeout 3`，避免 DNS / TCP stall 吃滿 `--max-time`
+- `cache_mtime` 雙 stat 都失敗時退回 `0`，避免空字串導致 arithmetic syntax error 洩漏到 stderr
+- `claude_config_dir_hash` 截斷到 64 字元，避免極長路徑超過檔名限制
+
+### Notes
+
+- **無 breaking change**：升級僅需替換腳本，settings.json 不需調整
+- 既有 cache 檔位置從 `/tmp/claude/` 移到 `/tmp/claude-${UID}/`，舊檔案會被忽略；首次執行會重建（一次 OAuth API call）
+- Windows / MSYS 上 `chmod 700` 因檔系限制不會生效，但 Windows TEMP 預設 ACL 已是 per-user，實質安全等價
+
 ## [v1.1.0] - 2026-05-06
 
 ### Added
@@ -53,6 +78,7 @@
 - 支援動態折行（單行 / 雙行）依終端機寬度自動切換
 - 內建版本檢查：對比 GitHub releases 最新 tag，顯示更新提示
 
-[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v1.1.1...HEAD
+[v1.1.1]: https://github.com/gn00678465/StatusLine/compare/v1.1.0...v1.1.1
 [v1.1.0]: https://github.com/gn00678465/StatusLine/compare/v1.0.0...v1.1.0
 [v1.0.0]: https://github.com/gn00678465/StatusLine/releases/tag/v1.0.0

@@ -17,7 +17,7 @@
 # =====================================================================
 
 set -f  # disable globbing
-VERSION="1.1.0"
+VERSION="1.1.1"
 
 input=$(cat)
 now=$(date +%s)
@@ -27,18 +27,19 @@ if [ -z "$input" ]; then
     exit 0
 fi
 
-# ANSI colors matching oh-my-posh theme (Optimized for Dark Terminal)
-blue='\033[38;2;80;180;255m'
-orange='\033[38;2;255;170;80m'
-green='\033[38;2;100;255;100m'
-cyan='\033[38;2;100;220;255m'
-red='\033[38;2;255;100;100m'
-yellow='\033[38;2;255;230;80m'
-white='\033[38;2;240;240;240m'
-dim='\033[2m'
-reset='\033[0m'
-bright_red='\033[38;2;255;50;50m'
-gray='\033[38;2;140;140;140m'
+# ANSI colors — $'...' embeds real ESC bytes so the final printf can use %s
+# (which won't interpret backslash escapes from any user-controlled string).
+blue=$'\033[38;2;80;180;255m'
+orange=$'\033[38;2;255;170;80m'
+green=$'\033[38;2;100;255;100m'
+cyan=$'\033[38;2;100;220;255m'
+red=$'\033[38;2;255;100;100m'
+yellow=$'\033[38;2;255;230;80m'
+white=$'\033[38;2;240;240;240m'
+dim=$'\033[2m'
+reset=$'\033[0m'
+bright_red=$'\033[38;2;255;50;50m'
+gray=$'\033[38;2;140;140;140m'
 
 # Format token counts (e.g., 50k / 200k) — pure bash arithmetic
 format_tokens() {
@@ -96,28 +97,34 @@ version_gt() {
 }
 
 # ===== Single jq pass extracts everything we need from input =====
+# `tonumber? // 0` 強制數字欄位即使遇到字串／物件也回 0，杜絕 arithmetic injection。
+# 字串欄位透過 gsub 移除控制字元（含 ESC \e、CR、LF），避免 terminal escape 注入。
 mapfile -t _inp < <(jq -r '
-  .model.display_name // "Claude",
-  .context_window.context_window_size // 200000,
-  .context_window.current_usage.input_tokens // 0,
-  .context_window.current_usage.cache_creation_input_tokens // 0,
-  .context_window.current_usage.cache_read_input_tokens // 0,
-  .session_id // "",
-  .cwd // "",
-  .rate_limits.five_hour.used_percentage // "",
-  .rate_limits.five_hour.resets_at // "",
-  .rate_limits.seven_day.used_percentage // "",
-  .rate_limits.seven_day.resets_at // ""
+  def safe_str: tostring | gsub("[\u0000-\u001f\u007f]"; "");
+  (.model.display_name // "Claude" | safe_str),
+  (.context_window.context_window_size // 200000 | tonumber? // 200000),
+  (.context_window.current_usage.input_tokens // 0 | tonumber? // 0),
+  (.context_window.current_usage.cache_creation_input_tokens // 0 | tonumber? // 0),
+  (.context_window.current_usage.cache_read_input_tokens // 0 | tonumber? // 0),
+  (.session_id // "" | safe_str),
+  (.cwd // "" | safe_str),
+  (.rate_limits.five_hour.used_percentage // "" | tostring),
+  (.rate_limits.five_hour.resets_at // "" | safe_str),
+  (.rate_limits.seven_day.used_percentage // "" | tostring),
+  (.rate_limits.seven_day.resets_at // "" | safe_str)
 ' <<< "$input" 2>/dev/null)
 # Strip trailing CR (jq on Git Bash emits CRLF)
 for _i in "${!_inp[@]}"; do _inp[_i]=${_inp[_i]%$'\r'}; done
 
+# Defense in depth: 即使 jq 邏輯被繞過，bash 端再強制數字驗證；任何非純數字 → 0
+_num() { [[ "$1" =~ ^[0-9]+$ ]] && echo "$1" || echo 0; }
+
 model_name=${_inp[0]:-Claude}
-size=${_inp[1]:-200000}
-[ "$size" -eq 0 ] 2>/dev/null && size=200000
-input_tokens=${_inp[2]:-0}
-cache_create=${_inp[3]:-0}
-cache_read=${_inp[4]:-0}
+size=$(_num "${_inp[1]:-200000}")
+[ "$size" -eq 0 ] && size=200000
+input_tokens=$(_num "${_inp[2]:-0}")
+cache_create=$(_num "${_inp[3]:-0}")
+cache_read=$(_num "${_inp[4]:-0}")
 session_id=${_inp[5]}
 cwd_raw=${_inp[6]}
 builtin_five_hour_pct=${_inp[7]}
@@ -226,30 +233,56 @@ get_oauth_token() {
 use_builtin=false
 if [ -n "$builtin_five_hour_pct" ] || [ -n "$builtin_seven_day_pct" ]; then use_builtin=true; fi
 
-# Hash config dir for cache filename — sanitize to avoid sha256sum subprocess
+# Per-user cache dir avoids symlink attacks via shared /tmp/claude.
+# Use $UID where set; fall back to a sanitized $USER; last resort 'anon'.
+_uid=${UID:-${EUID:-${USER:-anon}}}
+_uid=${_uid//[^a-zA-Z0-9_-]/_}
+cache_dir="/tmp/claude-${_uid}"
+umask 077
+mkdir -p "$cache_dir" 2>/dev/null
+chmod 700 "$cache_dir" 2>/dev/null
+
+# Atomic write helper: writes to mktemp + rename, never follows symlinks
+_atomic_write() {
+    local target=$1 content=$2
+    local tmp
+    tmp=$(mktemp "${target}.XXXXXX") || return 1
+    printf '%s' "$content" > "$tmp" && mv -f "$tmp" "$target"
+}
+
 claude_config_dir_hash=${claude_config_dir//[^a-zA-Z0-9]/_}
-cache_file="/tmp/claude/statusline-usage-cache-${claude_config_dir_hash}.json"
+claude_config_dir_hash=${claude_config_dir_hash:0:64}
+cache_file="${cache_dir}/usage-cache-${claude_config_dir_hash}.json"
 cache_max_age=60
-mkdir -p /tmp/claude
 
 needs_refresh=true
 usage_data=""
 
 if ! $use_builtin; then
     if [ -f "$cache_file" ] && [ -s "$cache_file" ]; then
-        cache_mtime=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null)
-        cache_age=$(( now - cache_mtime ))
+        cache_mtime=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0)
+        cache_age=$(( now - ${cache_mtime:-0} ))
         if [ "$cache_age" -lt "$cache_max_age" ]; then needs_refresh=false; fi
         usage_data=$(< "$cache_file")
     fi
     if $needs_refresh; then
-        touch "$cache_file"
         token=$(get_oauth_token)
         if [ -n "$token" ] && [ "$token" != "null" ]; then
-            response=$(curl -s --max-time 10 -H "Accept: application/json" -H "Content-Type: application/json" -H "Authorization: Bearer $token" -H "anthropic-beta: oauth-2025-04-20" -H "User-Agent: claude-code/2.1.34" "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
+            # Pass Authorization header via stdin --config to keep token out of argv
+            # (visible in ps/proc otherwise). Other headers stay in argv since they're
+            # not secrets. --connect-timeout caps DNS/TCP stalls separately.
+            response=$(printf 'header = "Authorization: Bearer %s"\n' "$token" \
+                | curl -s --config - \
+                    --max-time 10 \
+                    --connect-timeout 3 \
+                    -H "Accept: application/json" \
+                    -H "Content-Type: application/json" \
+                    -H "anthropic-beta: oauth-2025-04-20" \
+                    -H "User-Agent: claude-code/2.1.34" \
+                    "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
             if [ -n "$response" ] && echo "$response" | jq -e '.five_hour' >/dev/null 2>&1; then
                 usage_data="$response"
-                echo "$response" > "$cache_file"
+                _atomic_write "$cache_file" "$response"
             fi
         fi
     fi
@@ -284,26 +317,32 @@ format_reset_time() {
 }
 
 # ===== 4. Cache 命中率 + TTL 倒計時 (排在 5h 之前) =====
-# 取 session_id；若無則退回 cwd。直接 sanitize 避免 sha256sum 子進程
+# session_id 已在 jq 端做過控制字元清洗；這裡只保留檔名安全字元
 [ -z "$session_id" ] && session_id="${cwd:-no-cwd}"
 session_hash=${session_id//[^a-zA-Z0-9_-]/_}
 session_hash=${session_hash:0:32}
-cache_ttl_file="/tmp/claude/cache-ttl-${session_hash}.json"
+cache_ttl_file="${cache_dir}/cache-ttl-${session_hash}.json"
 
+# Defense in depth: state_started_at 之後會進 $(( ... ))，一定要驗證為純數字
 signature="${input_tokens}:${cache_create}:${cache_read}"
 
 state_started_at=""
 state_signature=""
 state_last_hit_rate=""
 if [ -f "$cache_ttl_file" ] && [ -s "$cache_ttl_file" ]; then
-    # Single jq call: validate + extract all three fields
+    # Single jq call: validate + extract all three fields, with control-char strip
     mapfile -t _state < <(jq -r '
-        if (.signature and .started_at) then .signature, .started_at, (.last_hit_rate // "")
+        def safe_str: tostring | gsub("[ -]"; "");
+        if (.signature and .started_at)
+        then (.signature | safe_str),
+             (.started_at | tonumber? // 0 | tostring),
+             ((.last_hit_rate // "") | safe_str)
         else "","","" end
     ' < "$cache_ttl_file" 2>/dev/null)
     for _i in "${!_state[@]}"; do _state[_i]=${_state[_i]%$'\r'}; done
     state_signature=${_state[0]}
-    state_started_at=${_state[1]}
+    state_started_at=$(_num "${_state[1]}")
+    [ "$state_started_at" = "0" ] && state_started_at=""
     state_last_hit_rate=${_state[2]}
 fi
 
@@ -324,18 +363,23 @@ fi
 new_started_at="$state_started_at"
 new_last_hit_rate="${state_last_hit_rate}"
 
+_write_ttl_state() {
+    local content
+    printf -v content '{"signature":"%s","started_at":%s,"last_hit_rate":"%s"}' \
+        "$signature" "$now" "$hit_rate"
+    _atomic_write "$cache_ttl_file" "$content"
+}
+
 if $has_usage && [ "$signature" != "$state_signature" ]; then
     new_started_at="$now"
     new_last_hit_rate="$hit_rate"
-    printf '{"signature":"%s","started_at":%s,"last_hit_rate":"%s"}' \
-        "$signature" "$now" "$hit_rate" > "$cache_ttl_file"
+    _write_ttl_state
 elif [ -z "$state_started_at" ] && ! $has_usage; then
     :
 elif [ -z "$state_started_at" ] && $has_usage; then
     new_started_at="$now"
     new_last_hit_rate="$hit_rate"
-    printf '{"signature":"%s","started_at":%s,"last_hit_rate":"%s"}' \
-        "$signature" "$now" "$hit_rate" > "$cache_ttl_file"
+    _write_ttl_state
 fi
 
 display_hit_rate="${hit_rate:-$new_last_hit_rate}"
@@ -484,42 +528,48 @@ total_visual_len=$((${#clean_out} + ${#clean_limit} + 5))
 final_output=""
 if [ "$total_visual_len" -gt "$term_width" ] && [ -n "$limit_block" ]; then
     # 超過寬度，強制分為兩行顯示，並加上層級線條
-    final_output="${out}\n${dim}└─${reset} ${limit_block}"
+    final_output="${out}"$'\n'"${dim}└─${reset} ${limit_block}"
 else
     # 夠寬，單行顯示
     [ -n "$limit_block" ] && final_output="${out}${sep_main}${limit_block}" || final_output="${out}"
 fi
 
 # ===== Update check =====
-version_cache_file="/tmp/claude/statusline-version-cache.json"
+# Per-user cache dir; latest_tag goes through safe_str + version-string regex
+# to prevent terminal escape injection from a tampered cache file.
+version_cache_file="${cache_dir}/statusline-version-cache.json"
 version_cache_max_age=86400
 
 version_needs_refresh=true
 version_data=""
 
 if [ -f "$version_cache_file" ]; then
-    vc_mtime=$(stat -c %Y "$version_cache_file" 2>/dev/null || stat -f %m "$version_cache_file" 2>/dev/null)
-    if [ $(( now - vc_mtime )) -lt "$version_cache_max_age" ]; then version_needs_refresh=false; fi
+    vc_mtime=$(stat -c %Y "$version_cache_file" 2>/dev/null || stat -f %m "$version_cache_file" 2>/dev/null || echo 0)
+    if [ $(( now - ${vc_mtime:-0} )) -lt "$version_cache_max_age" ]; then version_needs_refresh=false; fi
     [ -s "$version_cache_file" ] && version_data=$(< "$version_cache_file")
 fi
 
 if $version_needs_refresh; then
-    touch "$version_cache_file" 2>/dev/null
-    vc_response=$(curl -s --max-time 5 -H "Accept: application/vnd.github+json" "https://api.github.com/repos/gn00678465/StatusLine/releases/latest" 2>/dev/null)
+    vc_response=$(curl -s --max-time 5 --connect-timeout 3 \
+        -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/gn00678465/StatusLine/releases/latest" 2>/dev/null)
     if [ -n "$vc_response" ] && echo "$vc_response" | jq -e '.tag_name' >/dev/null 2>&1; then
         version_data="$vc_response"
-        echo "$vc_response" > "$version_cache_file"
+        _atomic_write "$version_cache_file" "$vc_response"
     fi
 fi
 
 update_line=""
 if [ -n "$version_data" ]; then
-    latest_tag=$(echo "$version_data" | jq -r '.tag_name // empty')
+    latest_tag=$(echo "$version_data" | jq -r '.tag_name // empty' | tr -dc 'a-zA-Z0-9.+-')
     if [ -n "$latest_tag" ] && version_gt "$latest_tag" "$VERSION"; then
-        update_line="\n${dim}Update available: ${latest_tag} → https://github.com/gn00678465/StatusLine${reset}"
+        update_line=$'\n'"${dim}Update available: ${latest_tag} → https://github.com/gn00678465/StatusLine${reset}"
     fi
 fi
 
-# Final Output
-printf "%b" "$final_output$update_line"
+# Final Output — %s instead of %b: user/cache-controlled strings (model_name,
+# latest_tag, etc.) cannot inject ANSI sequences via backslash escapes because
+# %s does not interpret \033 / \xHH / \uHHHH. Our own escapes were stored as
+# real ESC bytes via $'...' at definition time, so colors still render.
+printf "%s" "$final_output$update_line"
 exit 0
