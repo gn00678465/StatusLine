@@ -35,47 +35,40 @@ reset='\033[0m'
 bright_red='\033[38;2;255;50;50m'
 gray='\033[38;2;140;140;140m'
 
-# Format token counts (e.g., 50k / 200k)
+# Format token counts (e.g., 50k / 200k) — pure bash arithmetic
 format_tokens() {
     local num=$1
     if [ "$num" -ge 1000000 ]; then
-        awk "BEGIN {printf \"%.1fm\", $num / 1000000}"
+        local whole=$(( num / 1000000 ))
+        local frac=$(( (num % 1000000 + 50000) / 100000 ))
+        if [ "$frac" -ge 10 ]; then whole=$((whole+1)); frac=0; fi
+        printf "%d.%dm" "$whole" "$frac"
     elif [ "$num" -ge 1000 ]; then
-        awk "BEGIN {printf \"%.0fk\", $num / 1000}"
+        printf "%dk" $(( (num + 500) / 1000 ))
     else
         printf "%d" "$num"
     fi
 }
 
-# Format number with commas (e.g., 134,938)
-format_commas() {
-    printf "%'d" "$1"
-}
-
-# Return color escape based on usage percentage
-usage_color() {
+# Inline variants — write to global $_uc / $_gb instead of echoing, avoiding $() subshells
+usage_color_inline() {
     local pct=$1
-    if [ "$pct" -ge 90 ]; then echo "$red"
-    elif [ "$pct" -ge 70 ]; then echo "$orange"
-    elif [ "$pct" -ge 50 ]; then echo "$yellow"
-    else echo "$green"
+    if [ "$pct" -ge 90 ]; then _uc=$red
+    elif [ "$pct" -ge 70 ]; then _uc=$orange
+    elif [ "$pct" -ge 50 ]; then _uc=$yellow
+    else _uc=$green
     fi
 }
 
-# Generate visual progress bar (e.g., ▓▓▓░░░░)
-generate_bar() {
+generate_bar_inline() {
     local pct=$1
     local bar_width=${2:-10}
     local filled=$((pct * bar_width / 100))
     local empty=$((bar_width - filled))
-    local bar=""
-    local fill=""
-    local pad=""
-    
-    [ "$filled" -gt 0 ] && printf -v fill "%${filled}s" && bar="${fill// /▓}"
-    [ "$empty" -gt 0 ] && printf -v pad "%${empty}s" && bar="${bar}${pad// /░}"
-    
-    echo "$bar"
+    local fill="" pad=""
+    _gb=""
+    [ "$filled" -gt 0 ] && printf -v fill "%${filled}s" && _gb="${fill// /▓}"
+    [ "$empty" -gt 0 ] && printf -v pad "%${empty}s" && _gb+="${pad// /░}"
 }
 
 # Resolve config directory
@@ -97,16 +90,36 @@ version_gt() {
     return 1
 }
 
-# ===== Extract data from JSON =====
-model_name=$(echo "$input" | jq -r '.model.display_name // "Claude"')
+# ===== Single jq pass extracts everything we need from input =====
+mapfile -t _inp < <(jq -r '
+  .model.display_name // "Claude",
+  .context_window.context_window_size // 200000,
+  .context_window.current_usage.input_tokens // 0,
+  .context_window.current_usage.cache_creation_input_tokens // 0,
+  .context_window.current_usage.cache_read_input_tokens // 0,
+  .session_id // "",
+  .cwd // "",
+  .rate_limits.five_hour.used_percentage // "",
+  .rate_limits.five_hour.resets_at // "",
+  .rate_limits.seven_day.used_percentage // "",
+  .rate_limits.seven_day.resets_at // ""
+' <<< "$input" 2>/dev/null)
+# Strip trailing CR (jq on Git Bash emits CRLF)
+for _i in "${!_inp[@]}"; do _inp[_i]=${_inp[_i]%$'\r'}; done
 
-# Context window & Token usage
-size=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
+model_name=${_inp[0]:-Claude}
+size=${_inp[1]:-200000}
 [ "$size" -eq 0 ] 2>/dev/null && size=200000
+input_tokens=${_inp[2]:-0}
+cache_create=${_inp[3]:-0}
+cache_read=${_inp[4]:-0}
+session_id=${_inp[5]}
+cwd_raw=${_inp[6]}
+builtin_five_hour_pct=${_inp[7]}
+builtin_five_hour_reset=${_inp[8]}
+builtin_seven_day_pct=${_inp[9]}
+builtin_seven_day_reset=${_inp[10]}
 
-input_tokens=$(echo "$input" | jq -r '.context_window.current_usage.input_tokens // 0')
-cache_create=$(echo "$input" | jq -r '.context_window.current_usage.cache_creation_input_tokens // 0')
-cache_read=$(echo "$input" | jq -r '.context_window.current_usage.cache_read_input_tokens // 0')
 current=$(( input_tokens + cache_create + cache_read ))
 
 used_tokens=$(format_tokens $current)
@@ -135,20 +148,22 @@ sep_sub=" ${dim}·${reset} "   # 次屬性分隔點
 arrow=" ${dim}›${reset} "     # 層級遞進符號
 
 # 1. Workspace (Dir › Branch)
-cwd=$(echo "$input" | jq -r '.cwd // empty' | sed 's/\\/\//g')
+cwd=${cwd_raw//\\//}
 if [ -n "$cwd" ]; then
     display_dir="${cwd##*/}"
     git_branch=$(git -C "${cwd}" rev-parse --abbrev-ref HEAD 2>/dev/null)
     out+="📁 ${cyan}${display_dir}${reset}"
-    
+
     if [ -n "$git_branch" ]; then
         out+="${arrow}🌿 ${green}${git_branch}${reset}"
-        # Git 異動狀態 [+2|-1]
-        git_stat=$(git -C "${cwd}" diff --numstat 2>/dev/null | awk '{a+=$1; d+=$2} END {if (a+d>0) printf "+%d -%d", a, d}')
-        if [ -n "$git_stat" ]; then
-            stat_a="${git_stat%% *}"
-            stat_d="${git_stat##* }"
-            out+=" ${dim}[${green}${stat_a}${dim}|${red}${stat_d}${dim}]${reset}"
+        # Git 異動狀態 [+2|-1] — pure bash sum
+        _added=0; _deleted=0
+        while read -r _a _d _; do
+            [[ "$_a" =~ ^[0-9]+$ ]] && _added=$((_added + _a))
+            [[ "$_d" =~ ^[0-9]+$ ]] && _deleted=$((_deleted + _d))
+        done < <(git -C "${cwd}" diff --numstat 2>/dev/null)
+        if [ $((_added + _deleted)) -gt 0 ]; then
+            out+=" ${dim}[${green}+${_added}${dim}|${red}-${_deleted}${dim}]${reset}"
         fi
     fi
     out+="${sep_main}"
@@ -167,8 +182,8 @@ esac
 # 這裡不再加入 sep_main，將由後續折行邏輯決定
 
 # 3. Context Window Usage (將作為 limit_block 的起點)
-token_color=$(usage_color "$pct_used")
-token_bar=$(generate_bar "$pct_used" 10) # 統一使用長度 10 的 Bar
+usage_color_inline "$pct_used"; token_color=$_uc
+generate_bar_inline "$pct_used" 10; token_bar=$_gb
 context_block="${white}${used_tokens}${reset}${dim}/${total_tokens}${reset} ${dim}(${token_color}${token_bar} ${pct_used}%${reset}${dim})${reset}"
 
 
@@ -204,14 +219,10 @@ get_oauth_token() {
 }
 
 use_builtin=false
-builtin_five_hour_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
-builtin_five_hour_reset=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
-builtin_seven_day_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
-builtin_seven_day_reset=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')
-
 if [ -n "$builtin_five_hour_pct" ] || [ -n "$builtin_seven_day_pct" ]; then use_builtin=true; fi
 
-claude_config_dir_hash=$(echo -n "$claude_config_dir" | shasum -a 256 2>/dev/null || echo -n "$claude_config_dir" | sha256sum 2>/dev/null | cut -c1-8)
+# Hash config dir for cache filename — sanitize to avoid sha256sum subprocess
+claude_config_dir_hash=${claude_config_dir//[^a-zA-Z0-9]/_}
 cache_file="/tmp/claude/statusline-usage-cache-${claude_config_dir_hash}.json"
 cache_max_age=60
 mkdir -p /tmp/claude
@@ -222,9 +233,9 @@ usage_data=""
 if ! $use_builtin; then
     if [ -f "$cache_file" ] && [ -s "$cache_file" ]; then
         cache_mtime=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null)
-        cache_age=$(( $(date +%s) - cache_mtime ))
+        cache_age=$(( now - cache_mtime ))
         if [ "$cache_age" -lt "$cache_max_age" ]; then needs_refresh=false; fi
-        usage_data=$(cat "$cache_file" 2>/dev/null)
+        usage_data=$(< "$cache_file")
     fi
     if $needs_refresh; then
         touch "$cache_file"
@@ -268,13 +279,10 @@ format_reset_time() {
 }
 
 # ===== 4. Cache 命中率 + TTL 倒計時 (排在 5h 之前) =====
-# 取得 session_id，若無則用 cwd 雜湊
-session_id=$(echo "$input" | jq -r '.session_id // empty')
-if [ -z "$session_id" ]; then
-    _cwd_raw=$(echo "$input" | jq -r '.cwd // empty')
-    session_id=$(echo -n "${_cwd_raw:-no-cwd}" | sha256sum 2>/dev/null | cut -c1-16 || echo -n "${_cwd_raw:-no-cwd}" | shasum -a 256 | cut -c1-16)
-fi
-session_hash=$(echo -n "$session_id" | sha256sum 2>/dev/null | cut -c1-16 || echo -n "$session_id" | shasum -a 256 | cut -c1-16)
+# 取 session_id；若無則退回 cwd。直接 sanitize 避免 sha256sum 子進程
+[ -z "$session_id" ] && session_id="${cwd:-no-cwd}"
+session_hash=${session_id//[^a-zA-Z0-9_-]/_}
+session_hash=${session_hash:0:32}
 cache_ttl_file="/tmp/claude/cache-ttl-${session_hash}.json"
 
 signature="${input_tokens}:${cache_create}:${cache_read}"
@@ -283,12 +291,15 @@ state_started_at=""
 state_signature=""
 state_last_hit_rate=""
 if [ -f "$cache_ttl_file" ] && [ -s "$cache_ttl_file" ]; then
-    _raw_state=$(cat "$cache_ttl_file" 2>/dev/null)
-    if echo "$_raw_state" | jq -e '.signature and .started_at' >/dev/null 2>&1; then
-        state_signature=$(echo "$_raw_state" | jq -r '.signature // empty')
-        state_started_at=$(echo "$_raw_state" | jq -r '.started_at // empty')
-        state_last_hit_rate=$(echo "$_raw_state" | jq -r '.last_hit_rate // empty')
-    fi
+    # Single jq call: validate + extract all three fields
+    mapfile -t _state < <(jq -r '
+        if (.signature and .started_at) then .signature, .started_at, (.last_hit_rate // "")
+        else "","","" end
+    ' < "$cache_ttl_file" 2>/dev/null)
+    for _i in "${!_state[@]}"; do _state[_i]=${_state[_i]%$'\r'}; done
+    state_signature=${_state[0]}
+    state_started_at=${_state[1]}
+    state_last_hit_rate=${_state[2]}
 fi
 
 has_usage=false
@@ -298,7 +309,8 @@ hit_rate=""
 if $has_usage; then
     _total_for_cache=$(( input_tokens + cache_create + cache_read ))
     if [ "$_total_for_cache" -gt 0 ]; then
-        hit_rate=$(awk "BEGIN {printf \"%.0f\", $cache_read * 100 / $_total_for_cache}")
+        # Pure bash rounded percentage
+        hit_rate=$(( (cache_read * 100 + _total_for_cache / 2) / _total_for_cache ))
     else
         hit_rate="0"
     fi
@@ -383,9 +395,9 @@ fi
 if $use_builtin; then
     if [ -n "$builtin_five_hour_pct" ]; then
         [ -n "$limit_block" ] && limit_block+="${sep_sub}"
-        five_hour_pct=$(printf "%.0f" "$builtin_five_hour_pct")
-        five_hour_color=$(usage_color "$five_hour_pct")
-        five_hour_bar=$(generate_bar "$five_hour_pct" 10)
+        printf -v five_hour_pct "%.0f" "$builtin_five_hour_pct"
+        usage_color_inline "$five_hour_pct"; five_hour_color=$_uc
+        generate_bar_inline "$five_hour_pct" 10; five_hour_bar=$_gb
         limit_block+="${dim}5h: ${reset}${five_hour_color}${five_hour_bar} ${five_hour_pct}%${reset}"
         if [ -n "$builtin_five_hour_reset" ] && [ "$builtin_five_hour_reset" != "null" ]; then
             five_hour_reset=$(date -j -r "$builtin_five_hour_reset" +"%H:%M" 2>/dev/null || date -d "@$builtin_five_hour_reset" +"%H:%M" 2>/dev/null)
@@ -393,9 +405,9 @@ if $use_builtin; then
         fi
     fi
     if [ -n "$builtin_seven_day_pct" ]; then
-        seven_day_pct=$(printf "%.0f" "$builtin_seven_day_pct")
-        seven_day_color=$(usage_color "$seven_day_pct")
-        seven_day_bar=$(generate_bar "$seven_day_pct" 10)
+        printf -v seven_day_pct "%.0f" "$builtin_seven_day_pct"
+        usage_color_inline "$seven_day_pct"; seven_day_color=$_uc
+        generate_bar_inline "$seven_day_pct" 10; seven_day_bar=$_gb
         [ -n "$limit_block" ] && limit_block+="${sep_sub}"
         limit_block+="${dim}7d: ${reset}${seven_day_color}${seven_day_bar} ${seven_day_pct}%${reset}"
         if [ -n "$builtin_seven_day_reset" ] && [ "$builtin_seven_day_reset" != "null" ]; then
@@ -403,31 +415,51 @@ if $use_builtin; then
             [ -n "$seven_day_reset" ] && limit_block+=" ${dim}@${seven_day_reset}${reset}"
         fi
     fi
-elif [ -n "$usage_data" ] && echo "$usage_data" | jq -e '.five_hour' >/dev/null 2>&1; then
-    [ -n "$limit_block" ] && limit_block+="${sep_sub}"
-    five_hour_pct=$(echo "$usage_data" | jq -r '.five_hour.utilization // 0' | awk '{printf "%.0f", $1}')
-    five_hour_reset=$(format_reset_time "$(echo "$usage_data" | jq -r '.five_hour.resets_at // empty')" "time")
-    five_hour_bar=$(generate_bar "$five_hour_pct" 10)
-    limit_block+="${dim}5h: ${reset}$(usage_color "$five_hour_pct")${five_hour_bar} ${five_hour_pct}%${reset}"
-    [ -n "$five_hour_reset" ] && limit_block+=" ${dim}@${five_hour_reset}${reset}"
+elif [ -n "$usage_data" ]; then
+    # Single jq pass — extracts everything plus formats reset times via strftime
+    # jq does the date formatting (via localtime + manual month-name array to avoid
+    # locale-dependent %b glyphs from MSYS jq). ISO cleanup makes +00:00 / fractional
+    # seconds parseable by fromdateiso8601.
+    mapfile -t _ud < <(jq -r '
+      def clean_iso: sub("[.][0-9]+"; "") | sub("[+]00:00$"; "Z");
+      def months: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      def hm: . as $t | "\($t[3]|tostring|("0"+.)[-2:]):\($t[4]|tostring|("0"+.)[-2:])";
+      if .five_hour then
+        "OK",
+        (.five_hour.utilization // 0 | round),
+        (try (.five_hour.resets_at | clean_iso | fromdateiso8601 | localtime | hm) catch ""),
+        (.seven_day.utilization // 0 | round),
+        (try (.seven_day.resets_at | clean_iso | fromdateiso8601 | localtime | . as $t | "\(months[$t[1]]) \($t[2]), \($t|hm)") catch ""),
+        (.extra_usage.is_enabled // false),
+        (.extra_usage.utilization // 0 | round),
+        ((.extra_usage.used_credits // 0) / 100),
+        ((.extra_usage.monthly_limit // 0) / 100)
+      else "FAIL" end
+    ' <<< "$usage_data" 2>/dev/null)
+    for _i in "${!_ud[@]}"; do _ud[_i]=${_ud[_i]%$'\r'}; done
 
-    seven_day_pct=$(echo "$usage_data" | jq -r '.seven_day.utilization // 0' | awk '{printf "%.0f", $1}')
-    seven_day_reset=$(format_reset_time "$(echo "$usage_data" | jq -r '.seven_day.resets_at // empty')" "datetime")
-    seven_day_bar=$(generate_bar "$seven_day_pct" 10)
-    [ -n "$limit_block" ] && limit_block+="${sep_sub}"
-    limit_block+="${dim}7d: ${reset}$(usage_color "$seven_day_pct")${seven_day_bar} ${seven_day_pct}%${reset}"
-    [ -n "$seven_day_reset" ] && limit_block+=" ${dim}@${seven_day_reset}${reset}"
-
-    extra_enabled=$(echo "$usage_data" | jq -r '.extra_usage.is_enabled // false')
-    if [ "$extra_enabled" = "true" ]; then
-        extra_pct=$(echo "$usage_data" | jq -r '.extra_usage.utilization // 0' | awk '{printf "%.0f", $1}')
-        extra_used=$(echo "$usage_data" | jq -r '.extra_usage.used_credits // 0' | LC_NUMERIC=C awk '{printf "%.2f", $1/100}')
-        extra_limit=$(echo "$usage_data" | jq -r '.extra_usage.monthly_limit // 0' | LC_NUMERIC=C awk '{printf "%.2f", $1/100}')
+    if [ "${_ud[0]}" = "OK" ]; then
         [ -n "$limit_block" ] && limit_block+="${sep_sub}"
-        if [ -n "$extra_used" ] && [ -n "$extra_limit" ] && [[ "$extra_used" != *'$'* ]] && [[ "$extra_limit" != *'$'* ]]; then
-            limit_block+="${dim}extra: ${reset}$(usage_color "$extra_pct")\$${extra_used}/\$${extra_limit}${reset}"
-        else
-            limit_block+="${dim}extra: ${reset}${green}enabled${reset}"
+        five_hour_pct=${_ud[1]}
+        five_hour_reset=${_ud[2]}
+        usage_color_inline "$five_hour_pct"; _color5=$_uc
+        generate_bar_inline "$five_hour_pct" 10; _bar5=$_gb
+        limit_block+="${dim}5h: ${reset}${_color5}${_bar5} ${five_hour_pct}%${reset}"
+        [ -n "$five_hour_reset" ] && limit_block+=" ${dim}@${five_hour_reset}${reset}"
+
+        seven_day_pct=${_ud[3]}
+        seven_day_reset=${_ud[4]}
+        usage_color_inline "$seven_day_pct"; _color7=$_uc
+        generate_bar_inline "$seven_day_pct" 10; _bar7=$_gb
+        limit_block+="${sep_sub}${dim}7d: ${reset}${_color7}${_bar7} ${seven_day_pct}%${reset}"
+        [ -n "$seven_day_reset" ] && limit_block+=" ${dim}@${seven_day_reset}${reset}"
+
+        if [ "${_ud[5]}" = "true" ]; then
+            extra_pct=${_ud[6]}
+            printf -v extra_used "%.2f" "${_ud[7]:-0}" 2>/dev/null || extra_used="0.00"
+            printf -v extra_limit "%.2f" "${_ud[8]:-0}" 2>/dev/null || extra_limit="0.00"
+            usage_color_inline "$extra_pct"; _colorE=$_uc
+            limit_block+="${sep_sub}${dim}extra: ${reset}${_colorE}\$${extra_used}/\$${extra_limit}${reset}"
         fi
     fi
 else
@@ -436,12 +468,12 @@ else
 fi
 
 # ===== 6. 動態折行處理 (Dynamic line break if too long) =====
-# 剃除 ANSI 控制碼來計算真實長度
-clean_out=$(echo "$out" | sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g')
-clean_limit=$(echo "$limit_block" | sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g')
+# Bash extglob strip ANSI sequences (avoids two sed subprocesses)
+shopt -s extglob
+clean_out=${out//$'\033'\[*([0-9;])[a-zA-Z]/}
+clean_limit=${limit_block//$'\033'\[*([0-9;])[a-zA-Z]/}
 
-# 取得終端機寬度 (預設 100)
-term_width=${COLUMNS:-$(tput cols 2>/dev/null || echo 100)}
+term_width=${COLUMNS:-100}
 total_visual_len=$((${#clean_out} + ${#clean_limit} + 5))
 
 final_output=""
@@ -462,8 +494,8 @@ version_data=""
 
 if [ -f "$version_cache_file" ]; then
     vc_mtime=$(stat -c %Y "$version_cache_file" 2>/dev/null || stat -f %m "$version_cache_file" 2>/dev/null)
-    if [ $(( $(date +%s) - vc_mtime )) -lt "$version_cache_max_age" ]; then version_needs_refresh=false; fi
-    version_data=$(cat "$version_cache_file" 2>/dev/null)
+    if [ $(( now - vc_mtime )) -lt "$version_cache_max_age" ]; then version_needs_refresh=false; fi
+    [ -s "$version_cache_file" ] && version_data=$(< "$version_cache_file")
 fi
 
 if $version_needs_refresh; then
