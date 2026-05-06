@@ -1,0 +1,71 @@
+name: Release
+
+# Push 形如 v*（v1.1.0、v2.0.0-rc1）的 tag 時，自動從 CHANGELOG.md 抽出對應段落建立 GitHub Release
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # gh release create 需要寫入權限
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 完整歷史，方便產生 compare link
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Tag: $TAG"
+
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          # 抽 ## [vX.Y.Z] 標題到下一個 ## [ 之前的所有行；剝除前後空白行
+          # 用 index() 做字面比對，避開 regex 把 [v1.1.0] 當字元類別的問題
+          awk -v ver="$TAG" '
+            index($0, "## [" ver "]") == 1 { found=1; next }
+            found && /^## \[/              { exit }
+            found                          { print }
+          ' CHANGELOG.md \
+            | awk 'NF { found=1 } found' \
+            | tac | awk 'NF { found=1 } found' | tac \
+            > release-notes.md
+
+          if [ ! -s release-notes.md ]; then
+            echo "::error::No CHANGELOG.md section found for $TAG; add a '## [$TAG] - YYYY-MM-DD' header before tagging."
+            exit 1
+          fi
+
+          echo "--- extracted release notes ---"
+          cat release-notes.md
+          echo "--- end ---"
+
+      - name: Detect prerelease
+        id: prerelease
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          # 含 -rc / -beta / -alpha 之類 → prerelease
+          if [[ "$TAG" =~ -(rc|alpha|beta|preview) ]]; then
+            echo "flag=--prerelease" >> "$GITHUB_OUTPUT"
+          else
+            echo "flag=--latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            ${{ steps.prerelease.outputs.flag }}
