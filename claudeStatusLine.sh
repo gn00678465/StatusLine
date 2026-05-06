@@ -80,6 +80,27 @@ generate_bar_inline() {
 # Resolve config directory
 claude_config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
+# Cross-platform timeout wrapper. macOS ships without GNU `timeout` by default
+# (gtimeout via brew coreutils is the workaround). Calling `timeout` directly
+# leaks "command not found" to stderr on those systems, which can pollute the
+# prompt. Resolve once at startup; if neither exists we run unwrapped.
+if command -v timeout >/dev/null 2>&1; then
+    _timeout_cmd="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+    _timeout_cmd="gtimeout"
+else
+    _timeout_cmd=""
+fi
+_run_with_timeout() {
+    # $1 = seconds, remaining args = command. stderr always suppressed by caller.
+    local secs=$1; shift
+    if [ -n "$_timeout_cmd" ]; then
+        "$_timeout_cmd" "$secs" "$@"
+    else
+        "$@"
+    fi
+}
+
 # Return 0 (true) if $1 > $2 using semantic versioning
 version_gt() {
     local a="${1#v}" b="${2#v}"
@@ -181,13 +202,14 @@ if [ -n "$cwd" ]; then
     if [ -n "$git_branch" ]; then
         out+="${arrow}🌿 ${green}${git_branch}${reset}"
         # Git 異動狀態 [+2|-1] — pure bash sum
-        # `timeout 3` caps wall-clock on huge repos; `head -n 200` bounds output
-        # so SIGPIPE breaks the diff scan early. Both prevent prompt-render DoS.
+        # _run_with_timeout caps wall-clock on huge repos when timeout/gtimeout
+        # is available; falls back to unwrapped on macOS sans coreutils.
+        # `head -n 200` bounds output so SIGPIPE breaks the diff scan early.
         _added=0; _deleted=0
         while read -r _a _d _; do
             [[ "$_a" =~ ^[0-9]+$ ]] && _added=$((_added + _a))
             [[ "$_d" =~ ^[0-9]+$ ]] && _deleted=$((_deleted + _d))
-        done < <(timeout 3 git -C "${cwd}" diff --numstat 2>/dev/null | head -n 200)
+        done < <(_run_with_timeout 3 git -C "${cwd}" diff --numstat 2>/dev/null | head -n 200)
         if [ $((_added + _deleted)) -gt 0 ]; then
             out+=" ${dim}[${green}+${_added}${dim}|${red}-${_deleted}${dim}]${reset}"
         fi
@@ -224,8 +246,9 @@ get_oauth_token() {
             keychain_svc="Claude Code-credentials-${dir_hash}"
         fi
         # timeout 3 prevents indefinite stall if the keychain is locked and
-        # would otherwise pop a GUI prompt (matches secret-tool below).
-        local blob=$(timeout 3 security find-generic-password -s "$keychain_svc" -w 2>/dev/null)
+        # would otherwise pop a GUI prompt. _run_with_timeout falls back to
+        # unwrapped on systems without GNU timeout/gtimeout.
+        local blob=$(_run_with_timeout 3 security find-generic-password -s "$keychain_svc" -w 2>/dev/null)
         if [ -n "$blob" ]; then
             token=$(echo "$blob" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
             if [ -n "$token" ] && [ "$token" != "null" ]; then echo "$token"; return 0; fi
@@ -237,7 +260,7 @@ get_oauth_token() {
         if [ -n "$token" ] && [ "$token" != "null" ]; then echo "$token"; return 0; fi
     fi
     if command -v secret-tool >/dev/null 2>&1; then
-        local blob=$(timeout 2 secret-tool lookup service "Claude Code-credentials" 2>/dev/null)
+        local blob=$(_run_with_timeout 2 secret-tool lookup service "Claude Code-credentials" 2>/dev/null)
         if [ -n "$blob" ]; then
             token=$(echo "$blob" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
             if [ -n "$token" ] && [ "$token" != "null" ]; then echo "$token"; return 0; fi
@@ -542,13 +565,15 @@ if [ -n "$cache_block" ]; then
 fi
 
 if $use_builtin; then
-    # Coerce builtin percentages to safe integers BEFORE printf to avoid
-    # invalid-number diagnostics (which would echo attacker-controlled bytes
-    # via stderr). _num returns 0 for any non-integer input. We accept the
-    # tiny precision loss vs the original `%.0f` rounding here for the safety.
+    # Capture presence (was the field provided at all?) BEFORE we coerce to a
+    # safe integer; otherwise a real 0% becomes indistinguishable from "missing"
+    # and the block silently disappears. _num still neutralises any malformed
+    # value before it reaches printf / arithmetic.
+    _have_5h=false; [ -n "$builtin_five_hour_pct" ] && _have_5h=true
+    _have_7d=false; [ -n "$builtin_seven_day_pct" ] && _have_7d=true
     builtin_five_hour_pct=$(_num "${builtin_five_hour_pct%%.*}")
     builtin_seven_day_pct=$(_num "${builtin_seven_day_pct%%.*}")
-    if [ "$builtin_five_hour_pct" -gt 0 ] 2>/dev/null || [ -n "$builtin_five_hour_reset" ]; then
+    if $_have_5h; then
         [ -n "$limit_block" ] && limit_block+="${sep_sub}"
         five_hour_pct=$builtin_five_hour_pct
         usage_color_inline "$five_hour_pct"; five_hour_color=$_uc
@@ -559,7 +584,7 @@ if $use_builtin; then
             [ -n "$five_hour_reset" ] && limit_block+=" ${dim}@${five_hour_reset}${reset}"
         fi
     fi
-    if [ "$builtin_seven_day_pct" -gt 0 ] 2>/dev/null || [ -n "$builtin_seven_day_reset" ]; then
+    if $_have_7d; then
         seven_day_pct=$builtin_seven_day_pct
         usage_color_inline "$seven_day_pct"; seven_day_color=$_uc
         generate_bar_inline "$seven_day_pct" 10; seven_day_bar=$_gb

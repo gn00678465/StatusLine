@@ -55,8 +55,8 @@
 # 1. 把 [Unreleased] 內容搬到新版本 section，更新日期
 $EDITOR CHANGELOG.md
 
-# 2. 同步 bump 腳本中的 VERSION
-$EDITOR claudeStatusLine.sh   # VERSION="1.1.0"
+# 2. 同步 bump 腳本中的 VERSION（X.Y.Z 替換為實際版號，例 1.2.0）
+$EDITOR claudeStatusLine.sh   # VERSION="X.Y.Z"
 
 # 3. 更新 CHANGELOG 底部的 compare link
 # [Unreleased]: .../compare/vX.Y.Z...HEAD
