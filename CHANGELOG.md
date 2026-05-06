@@ -8,15 +8,26 @@
 
 ## [Unreleased]
 
+## [v1.1.2] - 2026-05-06
+
 ### Security
 
-接續 v1.1.1 修補剩餘 Medium / Low 等級問題：
+第二輪 copilot 安全審查（gpt-5.4 + gpt-5.4 sub-reviewer 交叉檢查，避開 Claude review Claude）發現的剩餘問題：
 
-- **MED** TOCTOU race：cache refresh 加 `mkdir` atomic lock，避免多個 prompt 並發時重複打 API + 寫入競態。lock 超過 30s 視為前一輪 crash 自動清除
-- **MED** `git diff --numstat` 在大型 repo 上無上限，可被當 prompt-render DoS 觸發。加 `timeout 3` + `head -n 200` 雙重界限
-- **LOW** `COLUMNS` 未驗證為正整數，非數字值（如 `COLUMNS=wide`）會讓 `[ -gt ... ]` 噴錯到 stderr。改用 regex `^[1-9][0-9]*$` 嚴格驗證
-- **LOW** macOS `security find-generic-password` 沒有 timeout，keychain 鎖死時會無限阻塞 prompt。加 `timeout 3`，與 `secret-tool` 一致
-- 修正 version cache 在 GitHub API 回 404／rate-limit 時不會被快取的問題（每次 prompt 都重打 API ~5s）。改成只要 response 非空就 cache，`tag_name` 抽取容忍缺欄位
+- **MED** `cache_dir` parent bootstrap 可被本機攻擊者預先放置 symlink 劫持。改成優先使用 `$XDG_RUNTIME_DIR / $HOME/.cache/StatusLine`（user-owned），對 cache_dir 加上 `-L` symlink 檢查、`-O` ownership 檢查、`-d` directory 檢查；任一失敗 `_cache_safe=false`，跳過所有寫入回退到無快取模式
+- **MED** `effort_level` 從 `CLAUDE_CODE_EFFORT_LEVEL` env / `settings.json` 取出後未經 sanitize 直接輸出。`printf %s` 不擋 raw ESC bytes（攻擊者可在 env 直接放真實 ESC byte）。改成 `tr -d '\000-\037\177'` + `[^a-zA-Z]` whitelist + 16 字元截斷
+- **LOW** `safe_str` 擴充含 BiDi/zero-width Unicode 控制字元範圍：`​-‏`（zero-width）、`‪-‮`（顯式 BiDi）、`⁦-⁩`（隔離 BiDi）、`﻿`（BOM）。防止視覺欺騙
+
+### Changed
+
+- `_atomic_write` 偵測 `_cache_safe=false` 時直接 return 1，不嘗試寫入；失敗時清理殘留 mktemp 檔
+- 新增 `[v1.1.2] - 2026-05-06` 合併以上 security follow-up + 從 v1.1.1 [Unreleased] 移過來的 medium/low 修補（TOCTOU lock、git diff timeout、COLUMNS 驗證、security timeout、version cache 寫入修正）
+
+### Notes
+
+- 二輪 review 仍指出幾個 Low：`COLUMNS` 沒上限、無 SIGINT trap、依賴版本未檢查、Unicode `effort_level` 未進 jq sanitizer。其中 effort_level 已在本版修補；其餘 Low 留給後續 release，因為攻擊路徑都需要本機 + 特定環境配合，且修補成本與收益不成比例
+- 升級不影響 settings.json
+- cache 位置從 `/tmp/claude-${UID}/` 移到 `${XDG_RUNTIME_DIR}/StatusLine` 或 `${HOME}/.cache/StatusLine`，舊檔案會被忽略；首次執行重建一次
 
 ## [v1.1.1] - 2026-05-06
 
@@ -86,7 +97,8 @@
 - 支援動態折行（單行 / 雙行）依終端機寬度自動切換
 - 內建版本檢查：對比 GitHub releases 最新 tag，顯示更新提示
 
-[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v1.1.2...HEAD
+[v1.1.2]: https://github.com/gn00678465/StatusLine/compare/v1.1.1...v1.1.2
 [v1.1.1]: https://github.com/gn00678465/StatusLine/compare/v1.1.0...v1.1.1
 [v1.1.0]: https://github.com/gn00678465/StatusLine/compare/v1.0.0...v1.1.0
 [v1.0.0]: https://github.com/gn00678465/StatusLine/releases/tag/v1.0.0

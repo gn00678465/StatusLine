@@ -17,7 +17,7 @@
 # =====================================================================
 
 set -f  # disable globbing
-VERSION="1.1.1"
+VERSION="1.1.2"
 
 input=$(cat)
 now=$(date +%s)
@@ -100,7 +100,7 @@ version_gt() {
 # `tonumber? // 0` 強制數字欄位即使遇到字串／物件也回 0，杜絕 arithmetic injection。
 # 字串欄位透過 gsub 移除控制字元（含 ESC \e、CR、LF），避免 terminal escape 注入。
 mapfile -t _inp < <(jq -r '
-  def safe_str: tostring | gsub("[\u0000-\u001f\u007f]"; "");
+  def safe_str: tostring | gsub("[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]"; "");
   (.model.display_name // "Claude" | safe_str),
   (.context_window.context_window_size // 200000 | tonumber? // 200000),
   (.context_window.current_usage.input_tokens // 0 | tonumber? // 0),
@@ -143,14 +143,26 @@ else
     pct_used=0
 fi
 
-# Check reasoning effort
+# Check reasoning effort. Both env-var and JSON sources are external/untrusted,
+# so strip control + BiDi/zero-width chars before any output, and clamp to a
+# whitelist of known levels (anything else displays as the literal cleaned text
+# but cannot inject escape sequences).
 settings_path="$claude_config_dir/settings.json"
 effort_level="medium"
+_raw_effort=""
 if [ -n "$CLAUDE_CODE_EFFORT_LEVEL" ]; then
-    effort_level="$CLAUDE_CODE_EFFORT_LEVEL"
+    _raw_effort="$CLAUDE_CODE_EFFORT_LEVEL"
 elif [ -f "$settings_path" ]; then
-    effort_val=$(jq -r '.effortLevel // empty' "$settings_path" 2>/dev/null)
-    [ -n "$effort_val" ] && effort_level="$effort_val"
+    _raw_effort=$(jq -r '.effortLevel // empty' "$settings_path" 2>/dev/null | tr -d '\r')
+fi
+# Strip ASCII control chars + DEL via parameter expansion (LC_ALL=C makes
+# byte-class matching consistent across locales).
+if [ -n "$_raw_effort" ]; then
+    _cleaned_effort=$(LC_ALL=C printf '%s' "$_raw_effort" | tr -d '\000-\037\177')
+    # Belt-and-braces: keep only printable ASCII. effort_level is a tiny
+    # whitelist anyway (low/medium/high/max), so anything fancier is suspicious.
+    _cleaned_effort=${_cleaned_effort//[^a-zA-Z]/}
+    [ -n "$_cleaned_effort" ] && effort_level="${_cleaned_effort:0:16}"
 fi
 
 # ===== 視覺符號與排版設定 =====
@@ -237,21 +249,45 @@ get_oauth_token() {
 use_builtin=false
 if [ -n "$builtin_five_hour_pct" ] || [ -n "$builtin_seven_day_pct" ]; then use_builtin=true; fi
 
-# Per-user cache dir avoids symlink attacks via shared /tmp/claude.
-# Use $UID where set; fall back to a sanitized $USER; last resort 'anon'.
-_uid=${UID:-${EUID:-${USER:-anon}}}
-_uid=${_uid//[^a-zA-Z0-9_-]/_}
-cache_dir="/tmp/claude-${_uid}"
+# Per-user cache dir. Prefer $XDG_RUNTIME_DIR / $HOME/.cache (already user-owned)
+# over /tmp/claude-${UID} (predictable, attacker can pre-plant symlink there).
+if [ -n "$XDG_RUNTIME_DIR" ] && [ -d "$XDG_RUNTIME_DIR" ]; then
+    cache_dir="${XDG_RUNTIME_DIR}/StatusLine"
+elif [ -n "$HOME" ]; then
+    cache_dir="${HOME}/.cache/StatusLine"
+else
+    _uid=${UID:-${EUID:-anon}}
+    _uid=${_uid//[^a-zA-Z0-9_-]/_}
+    cache_dir="/tmp/claude-${_uid}"
+fi
+
 umask 077
 mkdir -p "$cache_dir" 2>/dev/null
 chmod 700 "$cache_dir" 2>/dev/null
 
-# Atomic write helper: writes to mktemp + rename, never follows symlinks
+# Refuse to use cache_dir if it's a symlink or owned by someone else.
+# `test -L` catches symlinks; `-O` catches foreign ownership.
+# On failure, fall back to in-memory only (skip caching, slower but safe).
+_cache_safe=true
+if [ -L "$cache_dir" ] || { [ -e "$cache_dir" ] && [ ! -O "$cache_dir" ]; } || [ ! -d "$cache_dir" ]; then
+    _cache_safe=false
+fi
+
+# Atomic write helper: writes to mktemp + rename. mktemp creates with 0600
+# and is symlink-safe; subsequent rename within same directory is atomic.
+# Returns non-zero on failure so callers can react (currently log to stderr
+# and continue with stale cache rather than retrying loops).
 _atomic_write() {
+    $_cache_safe || return 1
     local target=$1 content=$2
     local tmp
     tmp=$(mktemp "${target}.XXXXXX") || return 1
-    printf '%s' "$content" > "$tmp" && mv -f "$tmp" "$target"
+    if printf '%s' "$content" > "$tmp" && mv -f "$tmp" "$target"; then
+        return 0
+    else
+        rm -f "$tmp" 2>/dev/null
+        return 1
+    fi
 }
 
 claude_config_dir_hash=${claude_config_dir//[^a-zA-Z0-9]/_}
@@ -347,7 +383,7 @@ state_last_hit_rate=""
 if [ -f "$cache_ttl_file" ] && [ -s "$cache_ttl_file" ]; then
     # Single jq call: validate + extract all three fields, with control-char strip
     mapfile -t _state < <(jq -r '
-        def safe_str: tostring | gsub("[ -]"; "");
+        def safe_str: tostring | gsub("[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]"; "");
         if (.signature and .started_at)
         then (.signature | safe_str),
              (.started_at | tonumber? // 0 | tostring),
