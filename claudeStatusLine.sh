@@ -271,19 +271,30 @@ _dir_is_safe() {
 # $HOME (typically 0755) are user-owned. /tmp is shared and predictable, so
 # we never fall through to it — _cache_safe stays false instead, disabling
 # all disk I/O.
+#
+# We validate the *full ancestor chain* up to the user-owned root: if $HOME
+# is peer-writable, accepting $HOME/.cache alone leaves a path-swap window
+# where the attacker rename/unlinks .cache after our check.
+#
+# Caveat: _dir_is_safe inspects classic Unix mode bits only. Filesystems with
+# POSIX/NFSv4 ACLs can grant peer write access while showing a safe mode.
+# Detecting ACLs portably from bash is impractical, so we document this
+# limitation in CHANGELOG; on hostile shared hosts with ACL-based sharing,
+# operators should ensure $HOME/$XDG_RUNTIME_DIR has no extended write ACLs.
 _cache_base=""
 if [ -n "$XDG_RUNTIME_DIR" ] && _dir_is_safe "$XDG_RUNTIME_DIR"; then
     _cache_base="$XDG_RUNTIME_DIR"
-elif [ -n "$HOME" ] && _dir_is_safe "$HOME/.cache"; then
-    _cache_base="$HOME/.cache"
-elif [ -n "$HOME" ] && [ ! -e "$HOME/.cache" ] && _dir_is_safe "$HOME"; then
-    # $HOME/.cache doesn't exist yet but $HOME itself is safe — create the
-    # standard XDG cache dir under our umask. mkdir -p is symlink-safe for the
-    # *create* step (it errors on EEXIST symlinks); the post-create _dir_is_safe
-    # below catches the result.
-    umask 077
-    mkdir -p "$HOME/.cache" 2>/dev/null
-    _dir_is_safe "$HOME/.cache" && _cache_base="$HOME/.cache"
+elif [ -n "$HOME" ] && _dir_is_safe "$HOME"; then
+    # $HOME must itself be safe before we trust ANY child path under it.
+    # Otherwise a peer-writable $HOME lets an attacker swap .cache after our check.
+    if _dir_is_safe "$HOME/.cache"; then
+        _cache_base="$HOME/.cache"
+    elif [ ! -e "$HOME/.cache" ]; then
+        # $HOME/.cache doesn't exist yet but $HOME is safe — create under umask.
+        umask 077
+        mkdir -p "$HOME/.cache" 2>/dev/null
+        _dir_is_safe "$HOME/.cache" && _cache_base="$HOME/.cache"
+    fi
 fi
 
 # Build the leaf only beneath a validated base. Use umask so the newly-created
@@ -531,9 +542,15 @@ if [ -n "$cache_block" ]; then
 fi
 
 if $use_builtin; then
-    if [ -n "$builtin_five_hour_pct" ]; then
+    # Coerce builtin percentages to safe integers BEFORE printf to avoid
+    # invalid-number diagnostics (which would echo attacker-controlled bytes
+    # via stderr). _num returns 0 for any non-integer input. We accept the
+    # tiny precision loss vs the original `%.0f` rounding here for the safety.
+    builtin_five_hour_pct=$(_num "${builtin_five_hour_pct%%.*}")
+    builtin_seven_day_pct=$(_num "${builtin_seven_day_pct%%.*}")
+    if [ "$builtin_five_hour_pct" -gt 0 ] 2>/dev/null || [ -n "$builtin_five_hour_reset" ]; then
         [ -n "$limit_block" ] && limit_block+="${sep_sub}"
-        printf -v five_hour_pct "%.0f" "$builtin_five_hour_pct"
+        five_hour_pct=$builtin_five_hour_pct
         usage_color_inline "$five_hour_pct"; five_hour_color=$_uc
         generate_bar_inline "$five_hour_pct" 10; five_hour_bar=$_gb
         limit_block+="${dim}5h: ${reset}${five_hour_color}${five_hour_bar} ${five_hour_pct}%${reset}"
@@ -542,8 +559,8 @@ if $use_builtin; then
             [ -n "$five_hour_reset" ] && limit_block+=" ${dim}@${five_hour_reset}${reset}"
         fi
     fi
-    if [ -n "$builtin_seven_day_pct" ]; then
-        printf -v seven_day_pct "%.0f" "$builtin_seven_day_pct"
+    if [ "$builtin_seven_day_pct" -gt 0 ] 2>/dev/null || [ -n "$builtin_seven_day_reset" ]; then
+        seven_day_pct=$builtin_seven_day_pct
         usage_color_inline "$seven_day_pct"; seven_day_color=$_uc
         generate_bar_inline "$seven_day_pct" 10; seven_day_bar=$_gb
         [ -n "$limit_block" ] && limit_block+="${sep_sub}"

@@ -39,13 +39,30 @@
 - `COLUMNS` regex 驗證
 - macOS `security` 加 `timeout 3`
 
+### Round 4 修補（chmod-after-validation race）
+
+- 引入 `_dir_is_safe()` helper 檢查 not-symlink、is-dir、owned-by-us、**no group/other write bit**（不只 ownership）
+- 移除 `chmod 700` after validation：`umask 077 + mkdir` 直接產生 0700 dir，杜絕 chmod-then-swap race
+- 移除 `/tmp/claude-${UID}` fallback：沒有 safe base 時 `_cache_safe=false`，純記憶體模式
+
+### Round 5 修補（ancestor chain + numeric coercion）
+
+- **MED**：`$HOME/.cache` 既存分支只驗 `.cache` 自己，沒驗 `$HOME` 是否安全。修補：要求 `$HOME` 與 `$HOME/.cache` **都** 通過 `_dir_is_safe`（不論 `.cache` 是預先存在還是新建）
+- **MED**：builtin rate-limit `used_percentage` 用 `tostring` 取出後直接餵 `printf -v "%.0f"`，malformed JSON 可觸發 invalid-number 診斷把 attacker bytes 灑到 stderr。修補：先過 `_num "${var%%.*}"` 強制成整數，0 表示無資料
+
+### Threat Model 限制
+
+- **mode-bit 邏輯**：`_dir_is_safe()` 只看傳統 Unix mode bits。在啟用 POSIX/NFSv4 ACL 的檔案系統上，dir 可能 mode 顯示 `0700` 但 ACL 仍允許他人寫入。Cross-platform ACL inspection 在純 bash 不可行；此檔系上的 hostile-host 部署需要 operator 確保 `$HOME` / `$XDG_RUNTIME_DIR` 沒有 extended write ACL
+- **Signal handling**：`SIGINT/SIGPIPE/SIGHUP` 在持鎖期間打斷會留下 30s 內 stale lock dir（自動清除）。LOW，非 must-fix
+
 ### Notes
 
 - **單機單用戶受信任 shell**：production-ready，可以 ship
-- **多用戶共享主機 hostile env**：經 R3 修補後，cache fallback 路徑也已 fail-closed，可以 ship
+- **多用戶共享主機 hostile env**（無 extended ACL）：production-ready，可以 ship
+- **多用戶共享主機 + extended ACL 啟用**：documented limitation，需要 operator 確認 ACL 配置
 - 升級不影響 settings.json
 - cache 位置從 `/tmp/claude/` 移到 `${XDG_RUNTIME_DIR}/StatusLine` 或 `${HOME}/.cache/StatusLine`；首次執行重建
-- 暫不處理的 Low（R3 確認不升級到 Medium+）：`COLUMNS` 沒上限、無 SIGINT trap、bash 3.2 / GNU timeout / jq <1.6 相容性
+- 暫不處理的 Low：`COLUMNS` 沒上限、無 SIGINT trap、bash 3.2 / GNU timeout / jq <1.6 相容性
 
 ## [v1.1.1] - 2026-05-06
 
