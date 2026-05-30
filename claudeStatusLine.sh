@@ -120,7 +120,10 @@ version_gt() {
 # ===== Single jq pass extracts everything we need from input =====
 # `tonumber? // 0` 強制數字欄位即使遇到字串／物件也回 0，杜絕 arithmetic injection。
 # 字串欄位透過 gsub 移除控制字元（含 ESC \e、CR、LF），避免 terminal escape 注入。
-mapfile -t _inp < <(jq -r '
+# bash 3.2 相容：macOS 內建 bash 無 `mapfile`(4.0+)，以 while-read 迴圈逐行讀入陣列。
+# `|| [ -n "$_ml" ]` 保留無結尾換行的最後一行；IFS= 與 -r 保留原始字元與空行。
+_inp=()
+while IFS= read -r _ml || [ -n "$_ml" ]; do _inp+=("$_ml"); done < <(jq -r '
   def safe_str: tostring | gsub("[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]"; "");
   (.model.display_name // "Claude" | safe_str),
   (.context_window.context_window_size // 200000 | tonumber? // 200000),
@@ -454,7 +457,8 @@ state_signature=""
 state_last_hit_rate=""
 if $_cache_safe && [ -f "$cache_ttl_file" ] && [ -s "$cache_ttl_file" ]; then
     # Single jq call: validate + extract all three fields, with control-char strip
-    mapfile -t _state < <(jq -r '
+    _state=()
+    while IFS= read -r _ml || [ -n "$_ml" ]; do _state+=("$_ml"); done < <(jq -r '
         def safe_str: tostring | gsub("[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]"; "");
         if (.signature and .started_at)
         then (.signature | safe_str),
@@ -600,7 +604,8 @@ elif [ -n "$usage_data" ]; then
     # jq does the date formatting (via localtime + manual month-name array to avoid
     # locale-dependent %b glyphs from MSYS jq). ISO cleanup makes +00:00 / fractional
     # seconds parseable by fromdateiso8601.
-    mapfile -t _ud < <(jq -r '
+    _ud=()
+    while IFS= read -r _ml || [ -n "$_ml" ]; do _ud+=("$_ml"); done < <(jq -r '
       def clean_iso: sub("[.][0-9]+"; "") | sub("[+]00:00$"; "Z");
       def months: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
       def hm: . as $t | "\($t[3]|tostring|("0"+.)[-2:]):\($t[4]|tostring|("0"+.)[-2:])";
