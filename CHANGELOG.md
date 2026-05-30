@@ -8,6 +8,12 @@
 
 ## [Unreleased]
 
+## [v1.1.3] - 2026-05-30
+
+### Fixed
+
+- **bash 3.2 相容性**：macOS 內建 `/bin/bash`（3.2.57）無 `mapfile`（4.0+），三處 JSON 解析會噴 `mapfile: command not found` 並退化輸出（model 變 `Claude`、token 變 0、rate-limit 區塊消失）。改用 `while IFS= read -r ... || [ -n "$line" ]` 迴圈逐行讀入陣列，保留空行並補捉無結尾換行的最後一行，行為與 `mapfile -t` 等價。此項為 v1.1.2 `Notes` 中列為暫不處理的 Low 相容性項目。
+
 ## [v1.1.2] - 2026-05-06
 
 ### Security
@@ -132,7 +138,8 @@
 - 支援動態折行（單行 / 雙行）依終端機寬度自動切換
 - 內建版本檢查：對比 GitHub releases 最新 tag，顯示更新提示
 
-[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v1.1.3...HEAD
+[v1.1.3]: https://github.com/gn00678465/StatusLine/compare/v1.1.2...v1.1.3
 [v1.1.2]: https://github.com/gn00678465/StatusLine/compare/v1.1.1...v1.1.2
 [v1.1.1]: https://github.com/gn00678465/StatusLine/compare/v1.1.0...v1.1.1
 [v1.1.0]: https://github.com/gn00678465/StatusLine/compare/v1.0.0...v1.1.0
