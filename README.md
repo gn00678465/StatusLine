@@ -68,6 +68,10 @@ When the terminal is wide enough the horse is right-aligned beside the info line
 otherwise it drops below. Pose advances across redraws via a per-session state file,
 so the animation stays continuous; idle (<5 tok/s) returns to frame 0 (standing).
 
+The horse right-aligns to `COLUMNS − 6` so the host's built-in padding doesn't clip
+its head (the horse faces right). If you still see only part of the horse, increase the
+reserved margin with `STATUSLINE_HORSE_MARGIN=<n>` (default `6`).
+
 Enable by exporting the variable, or inline it in the statusline command:
 ```json
 {

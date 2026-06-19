@@ -16,7 +16,7 @@
   - `1` / `l` / `large` → 8 行全解析馬；`s` / `small` → 4 行壓縮馬（2×2 max-pool）。未設或其他值 → 停用，輸出與原版**逐位元組相同**。
   - **渲染**：15 幀資料，每個十六進位字元編碼上下兩像素（`top=v/4`、`bottom=v%4`，各 0–3 灰階），以半角塊 `▀▄█` + 24-bit truecolor 渲染，run-length 壓縮 fg/bg。眼睛半瞇（`applyBlink`）。全 15 幀 × 2 size × 2 blink 共 60 組與原版 `makeHorseFrame` 逐位元組驗證相符。
   - **動畫節奏**：馬腿 fps 由 token 速率經 sqrt 緩動映射（1.5–24 fps）；速率以狀態檔在多次獨立呼叫間衰減（0.95/秒）/脈衝，閒置（<5 tok/s）回到直立站姿（frame 0）。每秒推進上限 4 幀（與 15 互質，確保高速時巡迴全幀）。
-  - **版面**：終端夠寬時靠右與資訊行併排（移植 `composeStatuslineWithInfo`），否則置於資訊行下方並靠右對齊；靠右縮排以盲文空格錨定，避免 statusline host strip 掉前導空白。
+  - **版面**：終端夠寬時靠右與資訊行併排（移植 `composeStatuslineWithInfo`），否則置於資訊行下方並靠右對齊；靠右縮排以盲文空格錨定，避免 statusline host strip 掉前導空白。馬靠右對齊到 `COLUMNS − 6`（預留 host 內建邊距，否則馬頭會被截斷只剩屁股），邊距可用 `STATUSLINE_HORSE_MARGIN` 覆寫。
   - **狀態複用**：複用既有的 `cache_dir` / `_atomic_write` / `session_hash` / `_cache_safe` 機制，狀態檔同樣 mode 700 原子寫入；讀回的每個欄位皆以 regex 驗證為純數值才進 `awk`，防竄改注入。
 
 ### 相依

@@ -866,7 +866,12 @@ if $horse_enabled; then
     _hblink=0; [ $(( now % 6 )) -eq 0 ] && _hblink=1
     horse_block=$(_render_horse_frame "$HORSE_FRAME_INDEX" "$_hblink" "$horse_size")
     if [ -n "$horse_block" ]; then
-        final_output=$(_horse_compose "$final_output" "$horse_block" "$term_width")
+        # statusline host 有內建左右邊距; 靠右對齊到完整 COLUMNS 會把馬的右緣(馬頭)推進
+        # 截斷區 → 只剩馬屁股。預留邊距把整匹馬往左拉。可用 STATUSLINE_HORSE_MARGIN 覆寫。
+        _hmargin=6
+        [[ "${STATUSLINE_HORSE_MARGIN:-}" =~ ^[0-9]+$ ]] && _hmargin=$STATUSLINE_HORSE_MARGIN
+        _hcols=$(( term_width - _hmargin )); [ "$_hcols" -lt 16 ] && _hcols=16
+        final_output=$(_horse_compose "$final_output" "$horse_block" "$_hcols")
     fi
 fi
 
