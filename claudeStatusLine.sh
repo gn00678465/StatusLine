@@ -17,7 +17,7 @@
 # =====================================================================
 
 set -f  # disable globbing
-VERSION="1.1.3"
+VERSION="1.2.0"
 
 input=$(cat)
 now=$(date +%s)
@@ -40,6 +40,190 @@ dim=$'\033[2m'
 reset=$'\033[0m'
 bright_red=$'\033[38;2;255;50;50m'
 gray=$'\033[38;2;140;140;140m'
+
+# ===== Horse animation (opt-in via STATUSLINE_HORSE=1) =====
+# 移植自 token-horse (MIT, ratelworks/token-horse)。15 幀，每個十六進位字元
+# 編碼上下兩個像素 (top=v/4, bottom=v%4，各 0–3 灰階)，以半角塊 ▀▄█ + 24-bit
+# truecolor 渲染，逐位元組對齊原版 makeHorseFrame(size:'l')。
+# 馬腿 fps 由 token 消耗速率驅動 (sqrt 緩動)，速率以狀態檔在多次獨立呼叫間
+# 衰減/脈衝，閒置時 (<5 tok/s) 回到直立站姿 (frame 0)。
+# STATUSLINE_HORSE: 1/true/on/yes/l/large → 8 行全解析; s/small/compact → 4 行壓縮 (2×2 max-pool)
+horse_enabled=false; horse_size=l
+case "${STATUSLINE_HORSE:-}" in
+    1|true|on|yes|l|large) horse_enabled=true; horse_size=l ;;
+    s|small|compact)       horse_enabled=true; horse_size=s ;;
+esac
+
+_horse_init() {
+    HORSE_FG[1]=$'\033[38;2;15;95;36m';   HORSE_BG[1]=$'\033[48;2;15;95;36m'
+    HORSE_FG[2]=$'\033[38;2;36;184;74m';  HORSE_BG[2]=$'\033[48;2;36;184;74m'
+    HORSE_FG[3]=$'\033[38;2;89;255;117m'; HORSE_BG[3]=$'\033[48;2;89;255;117m'
+    HORSE_ROWS=(
+'0000000000000000000000000f190000' '0000000000000000000000045ffef330' '0000000001000000000000055fffccc0' '00000001555113ffffffff777fff0000' '0000001540440ffffffffffffffe0000' '00000000000003feecccccccffa00000' '0000000000000fca00000000f0a00000' '0000000000000d0900000000d0900000'
+'0000000000000000000000000f190000' '0000000000000000000000045ffef330' '0000000010000000000000055fffccc0' '0000001555113ffffffff777fffc0000' '000001540440ffffffffffffffc00000' '0000000000003ffccccccccffa000000' '00000000000fca800000013e28000000' '00000000001c008100001c0000000000'
+'0000000000000000000000000f190000' '0000000000000000000000045ffef330' '0000001100000000000000055fffccc0' '000015555113fffffffff777fffc0000' '00000400440ffffffffffffffc000000' '000000000003ffccccccccff82000000' '0000000000fca80000003c0028000000' '0000000000cd0810004c000400000000'
+'0000000000000000000000000f190000' '0000000000000000000000045ffef330' '0000015510000000000000055fffccc0' '000045445513fffffffff777fffc0000' '00000000000ffffffffffffffc000000' '000000000000ffccccccccff82000000' '00000000000fc82000433c1228000000' '000000000000c1081000000000000000'
+'0000000000000000000000000f190000' '0000000000000000000000045ffef330' '0000115100000000000000055fffccc0' '000444455113fffffffff777fffc0000' '00000000400ffffffffffffffc000000' '000000000000ffecccccccff8a000000' '00000000000fc8a00004c3c028000000' '000000000000c1881000000400000000'
+'0000000000000000000000000f190000' '0000000000000000000000045ffef330' '0000001000000000000000055fffccc0' '000155555113fffffffff777fffc0000' '00000000400ffffffffffffffc000000' '000000000000ffecccccccffa2000000' '00000000000cf8820004c33c0a000000' '0000000000000c108100000040000000'
+'0000000000000000000000000f190000' '0000000000000000000000015ffef330' '0000000000000000000000055fffccc0' '000011111113fffffffff777fffc0000' '00044454400ffffffffffffffc000000' '000000000000feecccccccffa2000000' '000000000000cf820000133c08200000' '0000000000000cd09000000000400000'
+'0000000000000000000000000f190000' '0000000000000000000000045ffef330' '0000000000000000000000055fffccc0' '0004111551113ffffffff777fffc0000' '000004444400ffffffffffffffc00000' '0000000000002fffcccccccffb300000' '00000000000288cf0000000003c81000' '0000000000081000c100000040000000'
+'0000000000000000000000000f190000' '0000000000000000000000015ffef330' '0000000110000000000000055fffccc0' '0000155555113ffffffff777fffc0000' '000000000000ffffffffffffffc00000' '0000000000002ffccccccccffb300000' '00000000000288f30000000000f81000' '00000000000900004000000000400000'
+'0000000000000000000000000f190000' '0000000000000000000000045ffef330' '0000000100000000000000055fffccc0' '000015545513fffffffff777fffc0000' '00044000000ffffffffffffffc000000' '000000000002ffcccccccccff3000000' '00000000002bc000000000008ecc1000' '00000000180c10000000000000400000'
+'0000000000000000000000000f190000' '0000000000000000000000045ffef330' '0000000000000000000000055fffccc0' '000411155113fffffffff777fffc0000' '00000454440ffffffffffffffc000000' '000000000002ffcccccccccff3000000' '00000000002bc000000000008ec30000' '00000000180d00000000000000814000'
+'0000000000000000000000010f190000' '0000000000000000000000015ffef330' '0000000000000000000000015fffccc0' '000411155113fffffffff777fffc0000' '00000454440ffffffffffffffc000000' '000000000002ffcccccccccff3000000' '00000000488bc00000000000acc30000' '00000000004000000000000900004000'
+'0000000000000000000000000f190000' '0000000000000000000000045ffef330' '0000000000000000000000055fffccc0' '000100115113fffffffff777fffc0000' '00004455440ffffffffffffffc000000' '000000000000ffecccccccff30000000' '00000000003ce80000000028c3000000' '0000000004040000000008100c100000'
+'0000000000000000000000000f190000' '0000000000000000000000015ffef330' '0000000000000000000000055fffccc0' '000000115113fffffffff777fffc0000' '00001554440ffffffffffffffc000000' '000000000000ffecccccccff00000000' '0000000013ccc2000000028f00000000' '00000000000008400000900c10000000'
+'0000000000000000000000000f190000' '0000000000000000000000045ffef330' '0000000000000000000000055fffccc0' '0000000001113ffffffff777fffc0000' '000000155540ffffffffffffffc00000' '0000000440000ffeeccccccff0000000' '000000000003cca00000122f80000000' '0000000000040040000000d000000000'
+    )
+}
+
+# 由 HTOP[]/HBOT[] (每欄上/下像素強度 0–3) 渲染並輸出一行半角塊。
+# run-length 壓縮 fg/bg、去尾端空白、盲文空格錨定縮排 — 對齊原版 makeHorseFrame。
+_horse_emit_line() {
+    local w=$1 line="" afg=-1 abg=-1 c top bottom char wfg wbg
+    for (( c = 0; c < w; c++ )); do
+        top=${HTOP[c]}; bottom=${HBOT[c]}
+        if [ "$top" -eq 0 ] && [ "$bottom" -eq 0 ]; then
+            [ "$abg" -ne -1 ] && { line+=$'\033[49m'; abg=-1; }; line+=" "; continue
+        fi
+        wbg=-1
+        if [ "$top" -gt 0 ] && [ "$bottom" -gt 0 ]; then
+            if [ "$top" -eq "$bottom" ]; then char="█"; wfg=$top
+            else char="▀"; wfg=$top; wbg=$bottom; fi
+        elif [ "$top" -gt 0 ]; then char="▀"; wfg=$top
+        else char="▄"; wfg=$bottom; fi
+        [ "$wfg" -ne "$afg" ] && { line+=${HORSE_FG[wfg]}; afg=$wfg; }
+        if [ "$wbg" -ne "$abg" ]; then
+            [ "$wbg" -eq -1 ] && line+=$'\033[49m' || line+=${HORSE_BG[wbg]}; abg=$wbg
+        fi
+        line+=$char
+    done
+    line=${line%"${line##*[! ]}"}                       # 去尾端空白
+    [ "${line:0:1}" = " " ] && line="⠀${line:1}"        # 盲文空格錨定縮排
+    case "$line" in *$'\033['*) line+=$'\033[0m';; esac
+    printf '%s\n' "$line"
+}
+
+# 渲染第 N 幀。size=l: 8 行×32 (cell 直接對應字元); size=s: 4 行×16 (2×2 max-pool 壓縮)。
+# eye 像素 (cell row 1 下半, col 27) 平時半瞇 (shade1)，blink 時 shade2 — 與原版 applyBlink 一致。
+_render_horse_frame() {
+    local idx=$(( $1 % 15 )) blink="${2:-0}" size="${3:-l}" base=$(( ($1 % 15) * 8 ))
+    local r c o row v top bottom L
+    if [ "$size" = s ]; then
+        # 下採樣: DS[r][c] (r 0..7, c 0..15) = 兩個 hex (col 2c,2c+1) 之 max(top,bottom) 再取大者
+        local -a DS; local v1 v2 t1 b1 t2 b2 m1 m2
+        for (( r = 0; r < 8; r++ )); do
+            row=${HORSE_ROWS[base + r]}
+            for (( c = 0; c < 16; c++ )); do
+                o=$(( 2 * c )); v1=$(( 16#${row:o:1} )); v2=$(( 16#${row:o+1:1} ))
+                t1=$(( v1 / 4 )); b1=$(( v1 % 4 )); t2=$(( v2 / 4 )); b2=$(( v2 % 4 ))
+                # eye: pixel[3][27] = cell row 1 下半 col 27 (= 此處 c=13 的第二格 2c+1)
+                if [ "$r" -eq 1 ] && [ "$c" -eq 13 ] && [ "$b2" -ge 2 ]; then
+                    [ "$blink" = 1 ] && b2=2 || b2=1
+                fi
+                m1=$(( t1 > b1 ? t1 : b1 )); m2=$(( t2 > b2 ? t2 : b2 ))
+                DS[r * 16 + c]=$(( m1 > m2 ? m1 : m2 ))
+            done
+        done
+        for (( L = 0; L < 4; L++ )); do
+            for (( c = 0; c < 16; c++ )); do HTOP[c]=${DS[(2*L)*16+c]}; HBOT[c]=${DS[(2*L+1)*16+c]}; done
+            _horse_emit_line 16
+        done
+    else
+        for (( r = 0; r < 8; r++ )); do
+            row=${HORSE_ROWS[base + r]}
+            for (( c = 0; c < 32; c++ )); do
+                v=$(( 16#${row:c:1} )); top=$(( v / 4 )); bottom=$(( v % 4 ))
+                if [ "$r" -eq 1 ] && [ "$c" -eq 27 ] && [ "$bottom" -ge 2 ]; then
+                    [ "$blink" = 1 ] && bottom=2 || bottom=1
+                fi
+                HTOP[c]=$top; HBOT[c]=$bottom
+            done
+            _horse_emit_line 32
+        done
+    fi
+}
+
+# 讀狀態 → 由 token 速率推進 legPhase → 寫回狀態。設 HORSE_FRAME_INDEX。
+# 狀態檔: "legPhase prevTotal updatedAt tokenRate" (空白分隔，全為數值)。
+# 速率信號用 context 總量差分 (input+cache_creation+cache_read) 作 token 脈衝:
+# 響應期間 current 增長 → 脈衝跳升 → 質疾馳; 閒置時無變化 → 0.95/秒衰減 → 站立。
+# 安全: 狀態檔可能被竄改，讀入的每個欄位都先以 regex 驗證為純數值才進 awk。
+_horse_advance() {
+    local sf="${cache_dir}/horse-${session_hash}.txt"
+    local lp=0 pt=$current up=$now rt=0
+    if $_cache_safe && [ -f "$sf" ] && [ -s "$sf" ]; then
+        local _a _b _c _d
+        read -r _a _b _c _d < "$sf" 2>/dev/null
+        [[ "$_a" =~ ^[0-9]+([.][0-9]+)?$ ]] && lp=$_a
+        [[ "$_b" =~ ^[0-9]+$ ]] && pt=$_b
+        [[ "$_c" =~ ^[0-9]+$ ]] && up=$_c
+        [[ "$_d" =~ ^[0-9]+([.][0-9]+)?$ ]] && rt=$_d
+    fi
+    local res
+    res=$(awk -v lp="$lp" -v pt="$pt" -v up="$up" -v rt="$rt" -v now="$now" -v cur="$current" 'BEGIN{
+        d = now - up; if (d < 0) d = 0; if (d > 4) d = 4;       # deltaSec, 上限 4
+        dt = cur - pt; if (dt < 0) dt = 0;                       # billable 脈衝
+        if (d > 0) { dec = rt * (0.95 ^ d);                      # 衰減
+                     if (dt > 0) { r = dt / d; rate = (dec > r) ? dec : r } else rate = dec }
+        else rate = rt;
+        if (rate < 5) fps = 0;                                   # 閒置 → 站立
+        else { n = (rate - 20) / 880; if (n < 0) n = 0; if (n > 1) n = 1;
+               fps = 1.5 + sqrt(n) * 22.5 }                      # 1.5–24 fps，sqrt 緩動
+        if (fps == 0) nlp = 0;
+        else { st = fps * d; if (st > 4) st = 4;                 # frame-step cap=4 (與 15 互質)
+               v = lp + st; nlp = v - int(v / 15) * 15 }
+        printf "%.4f %.4f %d", nlp, rate, int(nlp) % 15;
+    }')
+    local nlp nrt fidx
+    read -r nlp nrt fidx <<< "$res"
+    [[ "$fidx" =~ ^[0-9]+$ ]] || fidx=0
+    _atomic_write "$sf" "$nlp $current $now $nrt"
+    HORSE_FRAME_INDEX=$fidx
+}
+
+# 將資訊行(左)與馬幀(右)合成。移植自 token-horse composeStatuslineWithInfo:
+# 終端夠寬 → 馬靠右對齊、第 0 行與資訊行併排; 不夠寬(或資訊已折成多行) → 資訊在上、
+# 馬在其下並靠右對齊。靠右的縮排空白靠盲文空格錨定，避免 host strip 掉前導空白。
+# 需要 extglob (由 §6 啟用，呼叫時已生效) 來移除 ANSI 量測顯示寬度。
+_horse_compose() {
+    local info=$1 hb=$2 cols=$3
+    local -a hlines=(); local _hl
+    while IFS= read -r _hl || [ -n "$_hl" ]; do hlines+=("$_hl"); done <<< "$hb"
+    local hbox=0 w stripped
+    for _hl in "${hlines[@]}"; do
+        stripped=${_hl//$'\033'\[*([0-9;])[a-zA-Z]/}
+        w=${#stripped}; [ "$w" -gt "$hbox" ] && hbox=$w
+    done
+    local box_left=$(( cols - hbox )); [ "$box_left" -lt 0 ] && box_left=0
+    local info_single=true; case "$info" in *$'\n'*) info_single=false;; esac
+    local info_strip=${info//$'\033'\[*([0-9;])[a-zA-Z]/}; local info_w=${#info_strip}
+    local fits=false
+    [ -n "$info" ] && $info_single && [ $(( info_w + 1 + hbox )) -le "$cols" ] && fits=true
+    local -a out_lines=(); local i pad lead gap
+    if [ -n "$info" ] && ! $fits; then
+        printf -v pad '%*s' "$box_left" ''
+        out_lines+=("$info")
+        for _hl in "${hlines[@]}"; do
+            lead="${pad}${_hl}"; lead=${lead%"${lead##*[! ]}"}
+            [ "${lead:0:1}" = " " ] && lead="⠀${lead:1}"
+            out_lines+=("$lead")
+        done
+    else
+        for i in "${!hlines[@]}"; do
+            if [ "$i" -eq 0 ] && $fits; then
+                gap=$(( box_left - info_w )); [ "$gap" -lt 1 ] && gap=1
+                printf -v pad '%*s' "$gap" ''; lead="${info}${pad}${hlines[i]}"
+            else
+                printf -v pad '%*s' "$box_left" ''; lead="${pad}${hlines[i]}"
+            fi
+            lead=${lead%"${lead##*[! ]}"}
+            [ "${lead:0:1}" = " " ] && lead="⠀${lead:1}"
+            out_lines+=("$lead")
+        done
+    fi
+    local _oifs=$IFS; IFS=$'\n'; printf '%s' "${out_lines[*]}"; IFS=$_oifs
+}
 
 # Format token counts (e.g., 50k / 200k) — pure bash arithmetic
 format_tokens() {
@@ -670,6 +854,20 @@ if [ "$total_visual_len" -gt "$term_width" ] && [ -n "$limit_block" ]; then
 else
     # 夠寬，單行顯示
     [ -n "$limit_block" ] && final_output="${out}${sep_main}${limit_block}" || final_output="${out}"
+fi
+
+# ===== 6.5 馬動畫 (opt-in) =====
+# 以 token 速率驅動逐幀奔跑的半角塊馬; 狀態檔讓動畫跨多次呼叫連續。終端夠寬時靠右
+# 與資訊行併排，否則置於資訊行下方並靠右對齊。所有相依 (current/now/session_hash/
+# cache_dir/_atomic_write/term_width) 此時皆已就緒。
+if $horse_enabled; then
+    _horse_init
+    _horse_advance
+    _hblink=0; [ $(( now % 6 )) -eq 0 ] && _hblink=1
+    horse_block=$(_render_horse_frame "$HORSE_FRAME_INDEX" "$_hblink" "$horse_size")
+    if [ -n "$horse_block" ]; then
+        final_output=$(_horse_compose "$final_output" "$horse_block" "$term_width")
+    fi
 fi
 
 # ===== Update check =====
