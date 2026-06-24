@@ -143,7 +143,7 @@
 ### Notes
 
 - 無 breaking change，現有使用者升級不需調整 `settings.json`
-- 不要在 `settings.json` 加 `"refreshInterval": 1`——這不是 Claude Code 官方 statusLine 鍵，會讓整個 statusLine 區塊失效
+- 不要在 `settings.json` 加 `"refreshInterval"`（尤其低值如 `1`）——更正：`refreshInterval` 其實是 Claude Code 官方支援的鍵（v2.1.187 實測有效），先前「不是官方鍵、會讓 statusLine 失效」的描述有誤。真正要避免的原因是**效能**：本腳本在 Windows Git Bash 上每次 render 約需 ~3 秒（每 spawn 一個 jq/git/date 子進程約 ~200–500ms，全腳本約 15–20 個 spawn），低 refreshInterval 會讓 3 秒的進程不斷疊加 → 打字嚴重卡頓；且 Claude Code 取消逾時 render 時 Windows 不會連帶 kill 子進程 → 背景累積大量 jq.exe 孤兒進程。macOS/Linux 同腳本約 50–150ms，無此問題
 
 ## [v1.0.0] - 2026-04-30
 
