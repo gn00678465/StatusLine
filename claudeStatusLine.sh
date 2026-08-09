@@ -4,10 +4,10 @@
 # 預期效果範例 (Expected Output Example):
 #
 # [單行顯示 Single Line] (當終端機夠寬時):
-# 📁 project_dir › 🌿 feat-008a [+2|-1] │ 🤖 Opus 4.7 · 🧠 high │ ⚡️ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 📊 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · Fable 5: ▓▓▓░░░░░░░ 30% @Apr 24, 08:00 · extra: $1.23/$10.00
+# 📁 project_dir › 🌿 feat-008a [S2|W1] │ 🤖 Opus 4.7 · 🧠 high │ ⚡️ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 📊 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · Fable 5: ▓▓▓░░░░░░░ 30% @Apr 24, 08:00 · extra: $1.23/$10.00
 #
 # [雙行顯示 Two Lines] (當資訊字串長度超過終端機寬度時自動折行):
-# 📁 project_dir › 🌿 feat-008a [+2|-1] │ 🤖 Opus 4.7 · 🧠 high
+# 📁 project_dir › 🌿 feat-008a [S2|W1] │ 🤖 Opus 4.7 · 🧠 high
 # └─ ⚡️ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 📊 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · Fable 5: ▓▓▓░░░░░░░ 30% @Apr 24, 08:00 · extra: $1.23/$10.00
 #
 # 區塊說明:
@@ -147,6 +147,67 @@ _run_with_timeout() {
     fi
 }
 
+# Resolve a private per-user cache before collecting Git data. StatusLine can be
+# invoked repeatedly while Claude Code redraws the prompt, so the same secured
+# cache is shared by Git, usage, token-TTL, and update state.
+#
+# Every accepted directory must be a real directory, owned by us, with no
+# group/other write bit. We validate the full HOME -> .cache -> StatusLine
+# ancestor chain; /tmp is intentionally never used. umask creates new paths as
+# private from inception, and a weak pre-existing leaf makes caching fail closed.
+# This mode-bit check cannot detect extended POSIX/NFSv4 ACL grants; operators
+# on hostile shared hosts must verify those ACLs separately (see CHANGELOG).
+_dir_is_safe() {
+    [ -n "$1" ] || return 1
+    [ ! -L "$1" ] || return 1
+    [ -d "$1" ] || return 1
+    [ -O "$1" ] || return 1
+    local mode
+    mode=$(stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null) || return 1
+    local last=${mode: -1} mid=${mode: -2:1}
+    [ -n "$last" ] && [ -n "$mid" ] || return 1
+    (( (last & 2) == 0 )) && (( (mid & 2) == 0 )) || return 1
+    return 0
+}
+
+_cache_base=""
+if [ -n "$XDG_RUNTIME_DIR" ] && _dir_is_safe "$XDG_RUNTIME_DIR"; then
+    _cache_base="$XDG_RUNTIME_DIR"
+elif [ -n "$HOME" ] && _dir_is_safe "$HOME"; then
+    if _dir_is_safe "$HOME/.cache"; then
+        _cache_base="$HOME/.cache"
+    elif [ ! -e "$HOME/.cache" ]; then
+        umask 077
+        mkdir -p "$HOME/.cache" 2>/dev/null
+        _dir_is_safe "$HOME/.cache" && _cache_base="$HOME/.cache"
+    fi
+fi
+
+_cache_safe=false
+if [ -n "$_cache_base" ]; then
+    cache_dir="$_cache_base/StatusLine"
+    umask 077
+    mkdir -p "$cache_dir" 2>/dev/null
+    _dir_is_safe "$cache_dir" && _cache_safe=true
+fi
+
+$_cache_safe || cache_dir="/dev/null"
+
+_atomic_write() {
+    # mktemp creates mode 0600 in the validated directory; same-directory rename
+    # replaces the target atomically without following a symlink on creation.
+    $_cache_safe || return 1
+    local target=$1 content=$2
+    local tmp
+    tmp=$(mktemp "${target}.XXXXXX") || return 1
+    if printf '%s' "$content" > "$tmp" && mv -f "$tmp" "$target"; then
+        return 0
+    else
+        rm -f "$tmp" 2>/dev/null
+        return 1
+    fi
+}
+
 # Return 0 (true) if $1 > $2 using semantic versioning
 version_gt() {
     local a="${1#v}" b="${2#v}"
@@ -241,26 +302,155 @@ sep_main=" ${dim}│${reset} "  # 主區塊分隔線
 sep_sub=" ${dim}·${reset} "   # 次屬性分隔點
 arrow=" ${dim}›${reset} "     # 層級遞進符號
 
+# Git status is a background/read-only query. One porcelain-v2 snapshot gives
+# us the branch plus staged/worktree/conflict counts, while --no-optional-locks
+# prevents Git from refreshing the index and contending with foreground Git.
+# A tiny per-session cache absorbs rapid prompt redraws without hiding changes
+# for long; set STATUSLINE_GIT_CACHE_TTL=0 to disable it (maximum: 60 seconds).
+git_cache_ttl=${STATUSLINE_GIT_CACHE_TTL:-2}
+[[ "$git_cache_ttl" =~ ^[0-9]{1,2}$ ]] || git_cache_ttl=2
+[ "$git_cache_ttl" -gt 60 ] && git_cache_ttl=60
+
+_collect_git_status() {
+    local repo=$1 cache_file cache_age cache_content snapshot rc line rest xy x y
+    local refresh_lock lock_owned=false stale_available=false
+    local cache_values=()
+    local cache_hit=false
+
+    _git_ok=0
+    _git_branch=""
+    _git_staged=0
+    _git_unstaged=0
+    _git_conflicted=0
+
+    cache_file="${cache_dir}/git-status-${session_hash}.cache"
+    if $_cache_safe && [ "$git_cache_ttl" -gt 0 ] && [ -s "$cache_file" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            cache_values+=("$line")
+        done < "$cache_file"
+        if [[ "${cache_values[0]:-}" =~ ^[0-9]+$ ]] \
+            && [ "${cache_values[1]:-}" = "$repo" ] \
+            && [[ "${cache_values[2]:-}" =~ ^[01]$ ]] \
+            && [[ "${cache_values[4]:-}" =~ ^[0-9]+$ ]] \
+            && [[ "${cache_values[5]:-}" =~ ^[0-9]+$ ]] \
+            && [[ "${cache_values[6]:-}" =~ ^[0-9]+$ ]]; then
+            cache_age=$(( now - cache_values[0] ))
+            _git_ok=${cache_values[2]}
+            _git_branch=${cache_values[3]:-}
+            _git_staged=${cache_values[4]}
+            _git_unstaged=${cache_values[5]}
+            _git_conflicted=${cache_values[6]}
+            [ "$_git_ok" -eq 1 ] && [ -n "$_git_branch" ] && stale_available=true
+            if [ "$cache_age" -ge 0 ] && [ "$cache_age" -lt "$git_cache_ttl" ]; then
+                cache_hit=true
+            fi
+        fi
+    fi
+
+    $cache_hit && return 0
+
+    refresh_lock="${cache_file}.lock"
+    if $_cache_safe && [ "$git_cache_ttl" -gt 0 ]; then
+        if [ -d "$refresh_lock" ]; then
+            local lock_mtime
+            lock_mtime=$(stat -c %Y "$refresh_lock" 2>/dev/null || stat -f %m "$refresh_lock" 2>/dev/null || echo 0)
+            [ $(( now - ${lock_mtime:-0} )) -gt 5 ] && rmdir "$refresh_lock" 2>/dev/null
+        fi
+        if mkdir "$refresh_lock" 2>/dev/null; then
+            lock_owned=true
+        elif $stale_available; then
+            return 0
+        fi
+    fi
+
+    snapshot=$(_run_with_timeout 1 git --no-optional-locks -C "$repo" status \
+        --porcelain=v2 --branch --no-ahead-behind --untracked-files=no \
+        --ignore-submodules=dirty --no-renames 2>/dev/null)
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+        _git_ok=1
+        _git_branch=""
+        _git_staged=0
+        _git_unstaged=0
+        _git_conflicted=0
+        while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in
+                '# branch.head '*)
+                    _git_branch=${line#\# branch.head }
+                    [ "$_git_branch" = "(detached)" ] && _git_branch="detached"
+                    ;;
+                '1 '*|'2 '*)
+                    rest=${line:2}
+                    xy=${rest%% *}
+                    x=${xy:0:1}
+                    y=${xy:1:1}
+                    [ "$x" != "." ] && _git_staged=$((_git_staged + 1))
+                    [ "$y" != "." ] && _git_unstaged=$((_git_unstaged + 1))
+                    ;;
+                'u '*)
+                    _git_conflicted=$((_git_conflicted + 1))
+                    ;;
+            esac
+        done <<< "$snapshot"
+        if [ -z "$_git_branch" ]; then
+            _git_ok=0
+            $stale_available && {
+                _git_ok=${cache_values[2]}
+                _git_branch=${cache_values[3]:-}
+                _git_staged=${cache_values[4]}
+                _git_unstaged=${cache_values[5]}
+                _git_conflicted=${cache_values[6]}
+            }
+        fi
+    elif [ "$rc" -eq 124 ] && $stale_available; then
+        _git_ok=${cache_values[2]}
+        _git_branch=${cache_values[3]:-}
+        _git_staged=${cache_values[4]}
+        _git_unstaged=${cache_values[5]}
+        _git_conflicted=${cache_values[6]}
+    else
+        _git_ok=0
+        _git_branch=""
+        _git_staged=0
+        _git_unstaged=0
+        _git_conflicted=0
+    fi
+
+    if $_cache_safe && [ "$git_cache_ttl" -gt 0 ] \
+        && { [ "$rc" -ne 124 ] || ! $stale_available; }; then
+        printf -v cache_content '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
+            "$now" "$repo" "$_git_ok" "$_git_branch" \
+            "$_git_staged" "$_git_unstaged" "$_git_conflicted"
+        _atomic_write "$cache_file" "$cache_content"
+    fi
+    $lock_owned && rmdir "$refresh_lock" 2>/dev/null
+    return 0
+}
+
 # 1. Workspace (Dir › Branch)
 cwd=${cwd_raw//\\//}
+[ -z "$session_id" ] && session_id="${cwd:-no-cwd}"
+session_hash=${session_id//[^a-zA-Z0-9_-]/_}
+session_hash=${session_hash:0:32}
 if [ -n "$cwd" ]; then
     display_dir="${cwd##*/}"
-    git_branch=$(git -C "${cwd}" rev-parse --abbrev-ref HEAD 2>/dev/null)
+    _collect_git_status "$cwd"
     out+="📁 ${cyan}${display_dir}${reset}"
 
-    if [ -n "$git_branch" ]; then
-        out+="${arrow}🌿 ${green}${git_branch}${reset}"
-        # Git 異動狀態 [+2|-1] — pure bash sum
-        # _run_with_timeout caps wall-clock on huge repos when timeout/gtimeout
-        # is available; falls back to unwrapped on macOS sans coreutils.
-        # `head -n 200` bounds output so SIGPIPE breaks the diff scan early.
-        _added=0; _deleted=0
-        while read -r _a _d _; do
-            [[ "$_a" =~ ^[0-9]+$ ]] && _added=$((_added + _a))
-            [[ "$_d" =~ ^[0-9]+$ ]] && _deleted=$((_deleted + _d))
-        done < <(_run_with_timeout 3 git -C "${cwd}" diff --numstat 2>/dev/null | head -n 200)
-        if [ $((_added + _deleted)) -gt 0 ]; then
-            out+=" ${dim}[${green}+${_added}${dim}|${red}-${_deleted}${dim}]${reset}"
+    if [ "$_git_ok" -eq 1 ] && [ -n "$_git_branch" ]; then
+        out+="${arrow}🌿 ${green}${_git_branch}${reset}"
+        _git_detail=""
+        [ "$_git_staged" -gt 0 ] && _git_detail="${green}S${_git_staged}${reset}"
+        if [ "$_git_unstaged" -gt 0 ]; then
+            [ -n "$_git_detail" ] && _git_detail+="${dim}|${reset}"
+            _git_detail+="${yellow}W${_git_unstaged}${reset}"
+        fi
+        if [ "$_git_conflicted" -gt 0 ]; then
+            [ -n "$_git_detail" ] && _git_detail+="${dim}|${reset}"
+            _git_detail+="${red}C${_git_conflicted}${reset}"
+        fi
+        if [ -n "$_git_detail" ]; then
+            out+=" ${dim}[${reset}${_git_detail}${dim}]${reset}"
         fi
     fi
     out+="${sep_main}"
@@ -320,91 +510,6 @@ get_oauth_token() {
 
 use_builtin=false
 if [ -n "$builtin_five_hour_pct" ] || [ -n "$builtin_seven_day_pct" ]; then use_builtin=true; fi
-
-# Returns 0 if $1 is a directory we trust on a hostile-host model:
-# real dir, owned by us, not a symlink, AND no group/other write bit set.
-# Owner-only checks (-O) miss the case where a writable parent lets a peer
-# swap our subdir; the mode check excludes 0??[2367] modes (group/other write).
-_dir_is_safe() {
-    [ -n "$1" ] || return 1
-    [ ! -L "$1" ] || return 1
-    [ -d "$1" ] || return 1
-    [ -O "$1" ] || return 1
-    local mode
-    mode=$(stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null) || return 1
-    # Last two octal digits cover group + other; bit 2 is write.
-    local last=${mode: -1} mid=${mode: -2:1}
-    [ -n "$last" ] && [ -n "$mid" ] || return 1
-    (( (last & 2) == 0 )) && (( (mid & 2) == 0 )) || return 1
-    return 0
-}
-
-# Choose a per-user cache base. $XDG_RUNTIME_DIR (per spec mode 0700) and
-# $HOME (typically 0755) are user-owned. /tmp is shared and predictable, so
-# we never fall through to it — _cache_safe stays false instead, disabling
-# all disk I/O.
-#
-# We validate the *full ancestor chain* up to the user-owned root: if $HOME
-# is peer-writable, accepting $HOME/.cache alone leaves a path-swap window
-# where the attacker rename/unlinks .cache after our check.
-#
-# Caveat: _dir_is_safe inspects classic Unix mode bits only. Filesystems with
-# POSIX/NFSv4 ACLs can grant peer write access while showing a safe mode.
-# Detecting ACLs portably from bash is impractical, so we document this
-# limitation in CHANGELOG; on hostile shared hosts with ACL-based sharing,
-# operators should ensure $HOME/$XDG_RUNTIME_DIR has no extended write ACLs.
-_cache_base=""
-if [ -n "$XDG_RUNTIME_DIR" ] && _dir_is_safe "$XDG_RUNTIME_DIR"; then
-    _cache_base="$XDG_RUNTIME_DIR"
-elif [ -n "$HOME" ] && _dir_is_safe "$HOME"; then
-    # $HOME must itself be safe before we trust ANY child path under it.
-    # Otherwise a peer-writable $HOME lets an attacker swap .cache after our check.
-    if _dir_is_safe "$HOME/.cache"; then
-        _cache_base="$HOME/.cache"
-    elif [ ! -e "$HOME/.cache" ]; then
-        # $HOME/.cache doesn't exist yet but $HOME is safe — create under umask.
-        umask 077
-        mkdir -p "$HOME/.cache" 2>/dev/null
-        _dir_is_safe "$HOME/.cache" && _cache_base="$HOME/.cache"
-    fi
-fi
-
-# Build the leaf only beneath a validated base. Use umask so the newly-created
-# leaf is 0700 from inception — this avoids any chmod-after-validation race
-# where an attacker could swap the path between validation and chmod.
-_cache_safe=false
-if [ -n "$_cache_base" ]; then
-    cache_dir="$_cache_base/StatusLine"
-    umask 077
-    mkdir -p "$cache_dir" 2>/dev/null
-    # Validate the leaf AFTER mkdir; do NOT chmod afterwards. If the leaf
-    # already existed with weaker permissions (e.g. 0755 from a prior version),
-    # _dir_is_safe rejects it and we degrade to memory-only — safer than
-    # racing a chmod through any window the attacker can hit.
-    _dir_is_safe "$cache_dir" && _cache_safe=true
-fi
-
-# When validation fails, point cache_dir at /dev/null so any path-based
-# operation that slipped past a _cache_safe gate degrades to a no-op rather
-# than touching whatever attacker-controlled path triggered the rejection.
-$_cache_safe || cache_dir="/dev/null"
-
-# Atomic write helper. Hard-gated on _cache_safe; mktemp creates with mode 0600
-# in the validated dir, and the same-directory rename is atomic and does not
-# follow symlinks for the create step. Returns non-zero on any failure so
-# callers can fall back to in-memory only.
-_atomic_write() {
-    $_cache_safe || return 1
-    local target=$1 content=$2
-    local tmp
-    tmp=$(mktemp "${target}.XXXXXX") || return 1
-    if printf '%s' "$content" > "$tmp" && mv -f "$tmp" "$target"; then
-        return 0
-    else
-        rm -f "$tmp" 2>/dev/null
-        return 1
-    fi
-}
 
 claude_config_dir_hash=${claude_config_dir//[^a-zA-Z0-9]/_}
 claude_config_dir_hash=${claude_config_dir_hash:0:64}
@@ -489,10 +594,6 @@ format_reset_time() {
 }
 
 # ===== 4. Cache 命中率 + TTL 倒計時 (排在 5h 之前) =====
-# session_id 已在 jq 端做過控制字元清洗；這裡只保留檔名安全字元
-[ -z "$session_id" ] && session_id="${cwd:-no-cwd}"
-session_hash=${session_id//[^a-zA-Z0-9_-]/_}
-session_hash=${session_hash:0:32}
 cache_ttl_file="${cache_dir}/cache-ttl-${session_hash}.json"
 
 # Defense in depth: state_started_at 之後會進 $(( ... ))，一定要驗證為純數字

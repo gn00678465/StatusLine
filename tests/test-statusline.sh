@@ -16,6 +16,7 @@ run_statusline_raw() (
     local style=${STATUS_TEST_STYLE:-bar}
     local fable_missing=${STATUS_TEST_FABLE_MISSING:-0}
     local color_scenario=${STATUS_TEST_COLOR_SCENARIO:-0}
+    local git_scenario=${STATUS_TEST_GIT_SCENARIO:-clean}
     local columns=${STATUS_TEST_COLUMNS:-1000}
     local model_name=${STATUS_TEST_MODEL_NAME:-}
     local mock_home
@@ -35,6 +36,42 @@ run_statusline_raw() (
         -c user.name=Mock -c user.email=mock@example.invalid \
         -c commit.gpgSign=false -c core.hooksPath=/dev/null \
         commit -q --allow-empty -m init
+    case "$git_scenario" in
+        mixed)
+            printf 'staged\n' > "$mock_home/mock-project/mixed.txt"
+            git -C "$mock_home/mock-project" add mixed.txt
+            printf 'unstaged-after-index\n' >> "$mock_home/mock-project/mixed.txt"
+            ;;
+        untracked)
+            printf 'not scanned\n' > "$mock_home/mock-project/untracked.txt"
+            ;;
+        detached)
+            git -C "$mock_home/mock-project" checkout -q --detach
+            ;;
+        conflict)
+            printf 'base\n' > "$mock_home/mock-project/conflict.txt"
+            git -C "$mock_home/mock-project" add conflict.txt
+            git -C "$mock_home/mock-project" \
+                -c user.name=Mock -c user.email=mock@example.invalid \
+                -c commit.gpgSign=false -c core.hooksPath=/dev/null \
+                commit -q -m base
+            git -C "$mock_home/mock-project" checkout -q -b conflicting-branch
+            printf 'other\n' > "$mock_home/mock-project/conflict.txt"
+            git -C "$mock_home/mock-project" \
+                -c user.name=Mock -c user.email=mock@example.invalid \
+                -c commit.gpgSign=false -c core.hooksPath=/dev/null \
+                commit -qam other
+            git -C "$mock_home/mock-project" checkout -q mock-branch
+            printf 'main\n' > "$mock_home/mock-project/conflict.txt"
+            git -C "$mock_home/mock-project" \
+                -c user.name=Mock -c user.email=mock@example.invalid \
+                -c commit.gpgSign=false -c core.hooksPath=/dev/null \
+                commit -qam main
+            git -C "$mock_home/mock-project" \
+                -c user.name=Mock -c user.email=mock@example.invalid \
+                merge -q conflicting-branch >/dev/null 2>&1 || :
+            ;;
+    esac
     fixture_input=$(jq --arg cwd "$mock_home/mock-project" --arg model_name "$model_name" '
         .cwd = $cwd
         | if $model_name == "" then . else .model.display_name = $model_name end
@@ -101,6 +138,19 @@ assert_contains "$bar_output" 'Fable 5: ▓▓▓░░░░░░░ 30%' 'Fab
 assert_not_contains "$bar_output" '▓ ▓' 'bar fill stays contiguous'
 assert_not_contains "$bar_output" '░ ░' 'bar remainder stays contiguous'
 
+git_mixed_output=$(STATUS_TEST_GIT_SCENARIO=mixed run_statusline status-input.json)
+assert_contains "$git_mixed_output" '🌿 mock-branch [S1|W1]' 'Git reports staged and post-stage worktree file counts'
+
+git_untracked_output=$(STATUS_TEST_GIT_SCENARIO=untracked run_statusline status-input.json)
+assert_not_contains "$git_untracked_output" '[S' 'Git skips expensive untracked enumeration'
+assert_not_contains "$git_untracked_output" '[W' 'untracked-only repo stays free of a worktree count'
+
+git_detached_output=$(STATUS_TEST_GIT_SCENARIO=detached run_statusline status-input.json)
+assert_contains "$git_detached_output" '🌿 detached' 'detached HEAD has an explicit label'
+
+git_conflict_output=$(STATUS_TEST_GIT_SCENARIO=conflict run_statusline status-input.json)
+assert_contains "$git_conflict_output" '🌿 mock-branch [C1]' 'Git reports conflict file count separately'
+
 dot_output=$(STATUS_TEST_STYLE=dots run_statusline status-input.json)
 assert_contains "$dot_output" '🤖 Fable 5 · 🧠 med' 'model and effort emoji in dots mode'
 assert_contains "$dot_output" '⚡️ 50k/200k' 'context emoji in dots mode'
@@ -151,6 +201,43 @@ cjk_short_output=$(LC_ALL=C STATUS_TEST_STYLE=dots STATUS_TEST_COLUMNS=248 STATU
 assert_contains "$cjk_short_output" $'\n└─ ⚡️ 50k/200k' 'CJK candidate wraps one column below its display width'
 cjk_exact_output=$(LC_ALL=C STATUS_TEST_STYLE=dots STATUS_TEST_COLUMNS=249 STATUS_TEST_MODEL_NAME='Fable 中文' run_statusline status-input.json)
 assert_not_contains "$cjk_exact_output" $'\n' 'CJK candidate stays single-line at exact display width'
+
+# Reuse one secured cache directory across redraws: the second invocation must
+# use the clean snapshot, while TTL=0 must immediately expose the staged file.
+cache_test_home=$(mktemp -d)
+cleanup_cache_test() {
+    [ ! -d "$cache_test_home" ] || rm -r -- "$cache_test_home"
+}
+trap cleanup_cache_test EXIT
+mkdir -p "$cache_test_home/runtime" "$cache_test_home/mock-project"
+chmod 700 "$cache_test_home" "$cache_test_home/runtime" "$cache_test_home/mock-project"
+git -C "$cache_test_home/mock-project" init -q
+git -C "$cache_test_home/mock-project" symbolic-ref HEAD refs/heads/cache-branch
+git -C "$cache_test_home/mock-project" \
+    -c user.name=Mock -c user.email=mock@example.invalid \
+    -c commit.gpgSign=false -c core.hooksPath=/dev/null \
+    commit -q --allow-empty -m init
+cache_fixture=$(jq --arg cwd "$cache_test_home/mock-project" '.cwd = $cwd | .session_id = "cache-test"' \
+    "$repo_dir/tests/fixtures/status-input.json")
+cache_first=$(env STATUSLINE_GIT_CACHE_TTL=60 CLAUDE_CODE_OAUTH_TOKEN=mock-token \
+    CLAUDE_CONFIG_DIR="$cache_test_home/.claude" XDG_RUNTIME_DIR="$cache_test_home/runtime" \
+    HOME="$cache_test_home" PATH="$mock_path" COLUMNS=1000 \
+    bash "$script" <<< "$cache_fixture" | strip_ansi)
+printf 'staged\n' > "$cache_test_home/mock-project/staged.txt"
+git -C "$cache_test_home/mock-project" add staged.txt
+cache_hit=$(env STATUSLINE_GIT_CACHE_TTL=60 CLAUDE_CODE_OAUTH_TOKEN=mock-token \
+    CLAUDE_CONFIG_DIR="$cache_test_home/.claude" XDG_RUNTIME_DIR="$cache_test_home/runtime" \
+    HOME="$cache_test_home" PATH="$mock_path" COLUMNS=1000 \
+    bash "$script" <<< "$cache_fixture" | strip_ansi)
+cache_disabled=$(env STATUSLINE_GIT_CACHE_TTL=0 CLAUDE_CODE_OAUTH_TOKEN=mock-token \
+    CLAUDE_CONFIG_DIR="$cache_test_home/.claude" XDG_RUNTIME_DIR="$cache_test_home/runtime" \
+    HOME="$cache_test_home" PATH="$mock_path" COLUMNS=1000 \
+    bash "$script" <<< "$cache_fixture" | strip_ansi)
+assert_not_contains "$cache_first" '[S' 'initial clean Git snapshot has no staged count'
+assert_not_contains "$cache_hit" '[S' 'rapid redraw reuses the short Git cache'
+assert_contains "$cache_disabled" '🌿 cache-branch [S1]' 'Git cache can be disabled for immediate refresh'
+cleanup_cache_test
+trap - EXIT
 
 if [ "$failures" -gt 0 ]; then
     printf '%d mock status-line assertion(s) failed\n' "$failures" >&2

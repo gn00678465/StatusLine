@@ -13,6 +13,8 @@
 - **Usage meter spacing**：dot 模式的 10 個 `●` / `○` 位置各以一個空格分隔；bar 模式維持連續 `▓░` 色塊
 - **Semantic emoji**：既有布局加入 `🤖` model、`🧠` effort、`⚡️` context 與單一 `📊` rate-limit group；原有 `📁` workspace、`🌿` Git 保持不變
 - **Fable label**：將不易辨識的 `F5` 改為完整名稱 `Fable 5`
+- **Git staged/working tree 語意**：以單次 porcelain v2 snapshot 取代 branch + `diff --numstat`；`S` / `W` / `C` 顯示 staged、unstaged、conflict 檔案數，修正 staged-only 變更完全不可見與前 200 檔截斷造成的錯誤統計
+- **Git refresh 降載**：所有背景查詢使用 `--no-optional-locks`，略過 untracked、submodule dirty 與 rename similarity 掃描，並加入預設 2 秒、可用 `STATUSLINE_GIT_CACHE_TTL` 調整或停用的短效 cache
 
 ## [v1.2.0] - 2026-08-09
 
