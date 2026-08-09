@@ -52,26 +52,26 @@
 ## 發版流程速查
 
 ```bash
-# 1. 把 [Unreleased] 內容搬到新版本 section，更新日期
+# 1. 在 release PR 中把 [Unreleased] 內容搬到新版本 section，更新日期
 $EDITOR CHANGELOG.md
 
-# 2. 同步 bump 腳本中的 VERSION（X.Y.Z 替換為實際版號，例 1.2.0）
+# 2. 同步 bump 腳本和 README 中的版本（X.Y.Z 替換為實際版號，例 1.2.0）
 $EDITOR claudeStatusLine.sh   # VERSION="X.Y.Z"
+$EDITOR README.md             # Version X.Y.Z
 
 # 3. 更新 CHANGELOG 底部的 compare link
 # [Unreleased]: .../compare/vX.Y.Z...HEAD
 # [vX.Y.Z]: .../compare/vPREV...vX.Y.Z
 
-# 4. Commit
-git add CHANGELOG.md claudeStatusLine.sh
-git commit -m "chore(release): vX.Y.Z"
-
-# 5. Tag + push（PR merge 進 main 後在 main 上做）
+# 4. 在 release PR 中跑 tests、git diff --check，以及 release workflow 的
+#    CHANGELOG 擷取命令；列印實際 version values、notes、mock output 供確認。
+#
+# 5. release PR 合併後，更新 main 並再次確認 merge commit 的三個版本來源、
+#    CHANGELOG section 和 extracted notes。確認遠端沒有同名 tag / Release 後：
 git checkout main && git pull
 git tag -a vX.Y.Z -m "Release vX.Y.Z"
-git push origin main
 git push origin vX.Y.Z
 
-# 6. GitHub Action 觸發，幾秒後 Release 自動出現
+# 6. GitHub Action 觸發，幾秒後 Release 自動出現；確認 tag、target commit、notes
 #    手動驗證：https://github.com/gn00678465/StatusLine/releases
 ```

@@ -1,5 +1,5 @@
 # StatusLine
-> Version 1.2.1
+> Version 1.2.2
 
 A Claude Code status line script with token usage, cache hit rate, TTL countdown, and 5h/7d/Fable weekly/extra rate limits.
 

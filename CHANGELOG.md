@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [v1.2.2] - 2026-08-09
+
 ### Changed
 
 - **Usage meter dot spacing**：參考 `claude-statusline`，將 dots 模式的十個 `●○` 位置直接相連；bar 模式維持連續 `▓░` 色塊
@@ -179,7 +181,8 @@
 - 支援動態折行（單行 / 雙行）依終端機寬度自動切換
 - 內建版本檢查：對比 GitHub releases 最新 tag，顯示更新提示
 
-[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v1.2.2...HEAD
+[v1.2.2]: https://github.com/gn00678465/StatusLine/compare/v1.2.1...v1.2.2
 [v1.2.1]: https://github.com/gn00678465/StatusLine/compare/v1.2.0...v1.2.1
 [v1.2.0]: https://github.com/gn00678465/StatusLine/compare/v1.1.3...v1.2.0
 [v1.1.3]: https://github.com/gn00678465/StatusLine/compare/v1.1.2...v1.1.3
