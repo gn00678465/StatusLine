@@ -8,6 +8,26 @@
 
 ## [Unreleased]
 
+## [v1.2.0] - 2026-08-09
+
+### Added
+
+- **Fable 5 weekly usage**：從 Anthropic OAuth usage response 的 dynamic `limits[]` 中取得 `weekly_scoped` / `Fable` 使用率與 reset time，並以 `F5` 區塊顯示；帳號無此 scope 或 API 失敗時靜默省略
+- **統一 10-dot usage UI**：設定 `STATUSLINE_USAGE_STYLE=dots` 即可同時將 context、5h、7d 與 Fable weekly 切換為 `●○` 顯示；未設定或其他值維持原有 bar
+- **Mock evaluation**：覆蓋 built-in rate limits、OAuth fallback、Fable scoped limit、bar/dots 切換、10-dot 數量、四段顏色與 missing-scope fallback
+
+### Changed
+
+- 在 Claude Code stdin 已提供 5h/7d 時仍會透過現有 60 秒 cache 讀取 OAuth usage，以取得 stdin 缺少的 per-model weekly limit
+
+### Documentation
+
+- 記錄 Fable weekly 資料流、OAuth response shape，以及參考 dot UI 的 glyph、rounding 與顏色語意
+
+### Notes
+
+- 無 breaking change；現有使用者不設定 `STATUSLINE_USAGE_STYLE` 時保持 bar 顯示
+
 ## [v1.1.3] - 2026-05-30
 
 ### Fixed
@@ -138,7 +158,8 @@
 - 支援動態折行（單行 / 雙行）依終端機寬度自動切換
 - 內建版本檢查：對比 GitHub releases 最新 tag，顯示更新提示
 
-[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v1.1.3...HEAD
+[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v1.2.0...HEAD
+[v1.2.0]: https://github.com/gn00678465/StatusLine/compare/v1.1.3...v1.2.0
 [v1.1.3]: https://github.com/gn00678465/StatusLine/compare/v1.1.2...v1.1.3
 [v1.1.2]: https://github.com/gn00678465/StatusLine/compare/v1.1.1...v1.1.2
 [v1.1.1]: https://github.com/gn00678465/StatusLine/compare/v1.1.0...v1.1.1

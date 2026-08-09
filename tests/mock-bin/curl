@@ -1,0 +1,19 @@
+#!/bin/bash
+
+case "$*" in
+    *api.anthropic.com/api/oauth/usage*)
+        if [ "${MOCK_COLOR_SCENARIO:-0}" = "1" ]; then
+            printf '%s\n' '{"five_hour":{"utilization":70,"resets_at":"2030-03-17T17:46:40Z"},"seven_day":{"utilization":90,"resets_at":"2030-03-17T17:46:40Z"},"extra_usage":{"is_enabled":false},"limits":[{"kind":"weekly_scoped","scope":{"model":{"display_name":"Fable"}},"percent":90,"resets_at":"2030-03-17T17:46:40Z"}]}'
+        elif [ "${MOCK_FABLE_MISSING:-0}" = "1" ]; then
+            printf '%s\n' '{"five_hour":{"utilization":20,"resets_at":"2030-03-17T17:46:40Z"},"seven_day":{"utilization":50,"resets_at":"2030-03-17T17:46:40Z"},"extra_usage":{"is_enabled":false},"limits":[]}'
+        else
+            printf '%s\n' '{"five_hour":{"utilization":20,"resets_at":"2030-03-17T17:46:40Z"},"seven_day":{"utilization":50,"resets_at":"2030-03-17T17:46:40Z"},"extra_usage":{"is_enabled":false},"limits":[{"kind":"weekly_scoped","scope":{"model":{"display_name":"Other"}},"percent":99,"resets_at":"2030-03-17T17:46:40Z"},{"kind":"weekly_scoped","scope":{"model":{"display_name":"Fable"}},"percent":30,"resets_at":"2030-03-17T17:46:40Z"}]}'
+        fi
+        ;;
+    *api.github.com/repos/gn00678465/StatusLine/releases/latest*)
+        printf '%s\n' '{"tag_name":"v1.2.0"}'
+        ;;
+    *)
+        exit 1
+        ;;
+esac

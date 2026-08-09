@@ -1,0 +1,15 @@
+{
+  "model": {
+    "display_name": "Fable 5"
+  },
+  "context_window": {
+    "context_window_size": 200000,
+    "current_usage": {
+      "input_tokens": 50000,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0
+    }
+  },
+  "session_id": "mock-session-oauth",
+  "cwd": "/tmp/mock-project"
+}
