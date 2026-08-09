@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Usage meter dot spacing**：參考 `claude-statusline`，將 dots 模式的十個 `●○` 位置直接相連；bar 模式維持連續 `▓░` 色塊
+
 ## [v1.2.1] - 2026-08-09
 
 ### Changed
