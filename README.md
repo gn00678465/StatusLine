@@ -1,5 +1,5 @@
 # StatusLine
-> Version 1.2.1
+> Version 1.2.2
 
 A Claude Code status line script with token usage, cache hit rate, TTL countdown, and 5h/7d/Fable weekly/extra rate limits.
 
@@ -67,7 +67,7 @@ On Windows with Git Bash, use:
 "command": "STATUSLINE_USAGE_STYLE=dots bash /c/Users/<USER>/.claude/claudeStatusLine.sh"
 ```
 
-Dot mode always uses 10 positions separated by one space: `● ● ● ○ ○ ○ ○ ○ ○ ○`. The default bar remains contiguous: `▓▓▓░░░░░░░`. In dot mode, `●` is used and dim `○` is available. The row color communicates utilization: green below 50%, orange at 50–69%, yellow at 70–89%, and red at 90% or above. Any value other than `dots` falls back to `bar`.
+Dot mode always uses 10 directly adjacent positions: `●●●○○○○○○○`. The default bar remains contiguous: `▓▓▓░░░░░░░`. In dot mode, `●` is used and dim `○` is available. The row color communicates utilization: green below 50%, orange at 50–69%, yellow at 70–89%, and red at 90% or above. Any value other than `dots` falls back to `bar`.
 
 ## Fable weekly usage
 

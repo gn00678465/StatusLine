@@ -14,11 +14,11 @@
 #   Cache <hit%> <MM:SS>  — 命中率 = cache_read / (input + cache_creation + cache_read)
 #                          綠 ≥50% / 灰 <50%；TTL 從上次響應倒數 1 小時
 #                          顏色: 0-20m 綠 / 20-40m 黃 / 40-55m 紅 / 最後 5m 閃紅 / 過期 exp 灰
-#   STATUSLINE_USAGE_STYLE=dots — context/5h/7d/Fable 5 統一改為 10 顆、單空格分隔的 ● ○；其他值維持連續 bar
+#   STATUSLINE_USAGE_STYLE=dots — context/5h/7d/Fable 5 統一改為 10 顆、直接相連的 ●○；其他值維持連續 bar
 # =====================================================================
 
 set -f  # disable globbing
-VERSION="1.2.1"
+VERSION="1.2.2"
 
 input=$(cat)
 now=$(date +%s)
@@ -110,7 +110,6 @@ generate_usage_meter_inline() {
         local i
         _gm=""
         for ((i = 0; i < width; i++)); do
-            [ "$i" -gt 0 ] && _gm+=" "
             if [ "$i" -lt "$filled" ]; then
                 _gm+="●"
             else

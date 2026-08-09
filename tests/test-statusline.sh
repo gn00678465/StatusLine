@@ -151,19 +151,27 @@ assert_contains "$git_detached_output" '🌿 detached' 'detached HEAD has an exp
 git_conflict_output=$(STATUS_TEST_GIT_SCENARIO=conflict run_statusline status-input.json)
 assert_contains "$git_conflict_output" '🌿 mock-branch [C1]' 'Git reports conflict file count separately'
 
+dots_25='●●○○○○○○○○'
+dots_20='●●○○○○○○○○'
+dots_30='●●●○○○○○○○'
+dots_50='●●●●●○○○○○'
+dots_empty='○○○○○○○○○○'
+dots_full='●●●●●●●●●●'
+
 dot_output=$(STATUS_TEST_STYLE=dots run_statusline status-input.json)
 assert_contains "$dot_output" '🤖 Fable 5 · 🧠 med' 'model and effort emoji in dots mode'
 assert_contains "$dot_output" '⚡️ 50k/200k' 'context emoji in dots mode'
 assert_occurrences "$dot_output" '📊' 1 'usage emoji remains singular in dots mode'
-assert_contains "$dot_output" '50k/200k (● ● ○ ○ ○ ○ ○ ○ ○ ○ 25%)' 'spaced 10-dot context meter'
-assert_contains "$dot_output" '5h: ● ● ○ ○ ○ ○ ○ ○ ○ ○ 20%' 'spaced 10-dot 5h meter'
-assert_contains "$dot_output" '7d: ● ● ● ● ● ○ ○ ○ ○ ○ 50%' 'spaced 10-dot weekly meter'
-assert_contains "$dot_output" 'Fable 5: ● ● ● ○ ○ ○ ○ ○ ○ ○ 30%' 'spaced 10-dot Fable weekly meter'
+assert_contains "$dot_output" "50k/200k (${dots_25} 25%)" 'contiguous 10-dot context meter'
+assert_contains "$dot_output" "5h: ${dots_20} 20%" 'contiguous 10-dot 5h meter'
+assert_contains "$dot_output" "7d: ${dots_50} 50%" 'contiguous 10-dot weekly meter'
+assert_contains "$dot_output" "Fable 5: ${dots_30} 30%" 'contiguous 10-dot Fable weekly meter'
+assert_not_contains "$dot_output" '● ●' 'dot meter has no ASCII-space separator'
 
 oauth_output=$(STATUS_TEST_STYLE=dots run_statusline status-input-oauth.json)
-assert_contains "$oauth_output" '5h: ● ● ○ ○ ○ ○ ○ ○ ○ ○ 20%' 'OAuth 5h fallback'
-assert_contains "$oauth_output" '7d: ● ● ● ● ● ○ ○ ○ ○ ○ 50%' 'OAuth weekly fallback'
-assert_contains "$oauth_output" 'Fable 5: ● ● ● ○ ○ ○ ○ ○ ○ ○ 30%' 'OAuth Fable weekly entry'
+assert_contains "$oauth_output" "5h: ${dots_20} 20%" 'OAuth 5h fallback'
+assert_contains "$oauth_output" "7d: ${dots_50} 50%" 'OAuth weekly fallback'
+assert_contains "$oauth_output" "Fable 5: ${dots_30} 30%" 'OAuth Fable weekly entry'
 
 missing_output=$(STATUS_TEST_STYLE=dots STATUS_TEST_FABLE_MISSING=1 run_statusline status-input.json)
 assert_not_contains "$missing_output" 'Fable 5:' 'missing scoped Fable entry stays hidden'
@@ -172,34 +180,34 @@ invalid_style_output=$(STATUS_TEST_STYLE=invalid run_statusline status-input.jso
 assert_contains "$invalid_style_output" '50k/200k (▓▓░░░░░░░░ 25%)' 'invalid style falls back to bar'
 
 color_output=$(STATUS_TEST_STYLE=dots STATUS_TEST_COLOR_SCENARIO=1 run_statusline_raw status-input-colors.json)
-assert_contains "$color_output" $'\033[38;2;255;170;80m● ● ● ● ●' '50% dot meter uses orange'
-assert_contains "$color_output" $'\033[38;2;255;230;80m● ● ● ● ● ● ●' '70% dot meter uses yellow'
-assert_contains "$color_output" $'\033[38;2;255;100;100m● ● ● ● ● ● ● ● ●' '90% dot meter uses red'
+assert_contains "$color_output" $'\033[38;2;255;170;80m●●●●●' '50% dot meter uses orange'
+assert_contains "$color_output" $'\033[38;2;255;230;80m●●●●●●●' '70% dot meter uses yellow'
+assert_contains "$color_output" $'\033[38;2;255;100;100m●●●●●●●●●' '90% dot meter uses red'
 
 wrapped_dot_output=$(STATUS_TEST_STYLE=dots STATUS_TEST_COLUMNS=100 run_statusline status-input.json)
-assert_contains "$wrapped_dot_output" $'\n└─ ⚡️ 50k/200k' 'spaced dots participate in dynamic width wrapping'
+assert_contains "$wrapped_dot_output" $'\n└─ ⚡️ 50k/200k' 'contiguous dots participate in dynamic width wrapping'
 assert_not_contains "$dot_output" $'\n' 'wide dots output remains a single line'
 
 boundary_output=$(STATUS_TEST_STYLE=dots run_statusline status-input-boundaries.json)
-assert_contains "$boundary_output" '0/200k (○ ○ ○ ○ ○ ○ ○ ○ ○ ○ 0%)' '0% renders ten spaced empty dots'
-assert_contains "$boundary_output" '5h: ● ● ● ● ● ● ● ● ● ● 100%' '100% renders ten spaced filled dots'
-assert_contains "$boundary_output" '7d: ○ ○ ○ ○ ○ ○ ○ ○ ○ ○ 0%' '0% weekly renders ten spaced empty dots'
+assert_contains "$boundary_output" "0/200k (${dots_empty} 0%)" '0% renders ten contiguous empty dots'
+assert_contains "$boundary_output" "5h: ${dots_full} 100%" '100% renders ten contiguous filled dots'
+assert_contains "$boundary_output" "7d: ${dots_empty} 0%" '0% weekly renders ten contiguous empty dots'
 
 seven_day_only_output=$(STATUS_TEST_STYLE=dots run_statusline status-input-seven-day-only.json)
-assert_contains "$seven_day_only_output" '📊 7d: ● ● ● ● ● ○ ○ ○ ○ ○ 50%' 'usage emoji prefixes first available rate-limit window'
+assert_contains "$seven_day_only_output" "📊 7d: ${dots_50} 50%" 'usage emoji prefixes first available rate-limit window'
 assert_occurrences "$seven_day_only_output" '📊' 1 'seven-day-only output has one usage emoji'
 
-one_column_short_output=$(STATUS_TEST_STYLE=dots STATUS_TEST_COLUMNS=245 run_statusline status-input.json)
-assert_contains "$one_column_short_output" $'\n└─ ⚡️ 50k/200k' '246-column candidate wraps at 245 columns'
-exact_fit_output=$(STATUS_TEST_STYLE=dots STATUS_TEST_COLUMNS=246 run_statusline status-input.json)
-assert_not_contains "$exact_fit_output" $'\n' '246-column candidate stays single-line at exact width'
+one_column_short_output=$(STATUS_TEST_STYLE=dots STATUS_TEST_COLUMNS=209 run_statusline status-input.json)
+assert_contains "$one_column_short_output" $'\n└─ ⚡️ 50k/200k' '210-column candidate wraps at 209 columns'
+exact_fit_output=$(STATUS_TEST_STYLE=dots STATUS_TEST_COLUMNS=210 run_statusline status-input.json)
+assert_not_contains "$exact_fit_output" $'\n' '210-column candidate stays single-line at exact width'
 
-c_locale_exact_output=$(LC_ALL=C STATUS_TEST_STYLE=dots STATUS_TEST_COLUMNS=246 run_statusline status-input.json)
+c_locale_exact_output=$(LC_ALL=C STATUS_TEST_STYLE=dots STATUS_TEST_COLUMNS=210 run_statusline status-input.json)
 assert_not_contains "$c_locale_exact_output" $'\n' 'width measurement is locale-independent at exact width'
 
-cjk_short_output=$(LC_ALL=C STATUS_TEST_STYLE=dots STATUS_TEST_COLUMNS=248 STATUS_TEST_MODEL_NAME='Fable 中文' run_statusline status-input.json)
+cjk_short_output=$(LC_ALL=C STATUS_TEST_STYLE=dots STATUS_TEST_COLUMNS=212 STATUS_TEST_MODEL_NAME='Fable 中文' run_statusline status-input.json)
 assert_contains "$cjk_short_output" $'\n└─ ⚡️ 50k/200k' 'CJK candidate wraps one column below its display width'
-cjk_exact_output=$(LC_ALL=C STATUS_TEST_STYLE=dots STATUS_TEST_COLUMNS=249 STATUS_TEST_MODEL_NAME='Fable 中文' run_statusline status-input.json)
+cjk_exact_output=$(LC_ALL=C STATUS_TEST_STYLE=dots STATUS_TEST_COLUMNS=213 STATUS_TEST_MODEL_NAME='Fable 中文' run_statusline status-input.json)
 assert_not_contains "$cjk_exact_output" $'\n' 'CJK candidate stays single-line at exact display width'
 
 # Reuse one secured cache directory across redraws: the second invocation must
