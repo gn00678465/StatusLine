@@ -4,17 +4,17 @@
 # 預期效果範例 (Expected Output Example):
 #
 # [單行顯示 Single Line] (當終端機夠寬時):
-# 📁 project_dir › 🌿 feat-008a [+2|-1] │ Opus 4.7 · effort: high │ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · F5: ▓▓▓░░░░░░░ 30% @Apr 24, 08:00 · extra: $1.23/$10.00
+# 📁 project_dir › 🌿 feat-008a [+2|-1] │ 🤖 Opus 4.7 · 🧠 high │ ⚡️ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 📊 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · Fable 5: ▓▓▓░░░░░░░ 30% @Apr 24, 08:00 · extra: $1.23/$10.00
 #
 # [雙行顯示 Two Lines] (當資訊字串長度超過終端機寬度時自動折行):
-# 📁 project_dir › 🌿 feat-008a [+2|-1] │ Opus 4.7 · effort: high
-# └─ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · F5: ▓▓▓░░░░░░░ 30% @Apr 24, 08:00 · extra: $1.23/$10.00
+# 📁 project_dir › 🌿 feat-008a [+2|-1] │ 🤖 Opus 4.7 · 🧠 high
+# └─ ⚡️ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 📊 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · Fable 5: ▓▓▓░░░░░░░ 30% @Apr 24, 08:00 · extra: $1.23/$10.00
 #
 # 區塊說明:
 #   Cache <hit%> <MM:SS>  — 命中率 = cache_read / (input + cache_creation + cache_read)
 #                          綠 ≥50% / 灰 <50%；TTL 從上次響應倒數 1 小時
 #                          顏色: 0-20m 綠 / 20-40m 黃 / 40-55m 紅 / 最後 5m 閃紅 / 過期 exp 灰
-#   STATUSLINE_USAGE_STYLE=dots — context/5h/7d/F5 統一改為 10 顆 ●○；其他值維持 bar
+#   STATUSLINE_USAGE_STYLE=dots — context/5h/7d/Fable 5 統一改為 10 顆、單空格分隔的 ● ○；其他值維持連續 bar
 # =====================================================================
 
 set -f  # disable globbing
@@ -107,14 +107,16 @@ generate_usage_meter_inline() {
 
     if [ "$usage_style" = "dots" ]; then
         local filled=$((pct * width / 100))
-        local empty=$((width - filled))
-        local fill="" pad=""
+        local i
         _gm=""
-        [ "$filled" -gt 0 ] && printf -v fill "%${filled}s" && _gm="${fill// /●}"
-        if [ "$empty" -gt 0 ]; then
-            printf -v pad "%${empty}s"
-            _gm+="${dim}${pad// /○}${dim_off}"
-        fi
+        for ((i = 0; i < width; i++)); do
+            [ "$i" -gt 0 ] && _gm+=" "
+            if [ "$i" -lt "$filled" ]; then
+                _gm+="●"
+            else
+                _gm+="${dim}○${dim_off}"
+            fi
+        done
     else
         generate_bar_inline "$pct" "$width"
         _gm=$_gb
@@ -265,9 +267,9 @@ if [ -n "$cwd" ]; then
 fi
 
 # 2. Model & Effort
-out+="${blue}${model_name}${reset}"
+out+="🤖 ${blue}${model_name}${reset}"
 out+="${sep_sub}"
-out+="${dim}effort: ${reset}"
+out+="🧠 "
 case "$effort_level" in
     low)    out+="${dim}${effort_level}${reset}" ;;
     medium) out+="${yellow}med${reset}" ;;
@@ -279,7 +281,7 @@ esac
 # 3. Context Window Usage (將作為 limit_block 的起點)
 usage_meter_color_inline "$pct_used"; token_color=$_uc
 generate_usage_meter_inline "$pct_used" 10; token_meter=$_gm
-context_block="${white}${used_tokens}${reset}${dim}/${total_tokens}${reset} ${dim}(${token_color}${token_meter} ${pct_used}%${reset}${dim})${reset}"
+context_block="⚡️ ${white}${used_tokens}${reset}${dim}/${total_tokens}${reset} ${dim}(${token_color}${token_meter} ${pct_used}%${reset}${dim})${reset}"
 
 
 # ===== OAuth & Rate Limits Fetching =====
@@ -607,6 +609,11 @@ fi
 
 # ===== 5. Rate Limits (加上進度條與 Context block 整合) =====
 limit_block="${context_block}"
+usage_icon_pending="📊 "
+take_usage_icon_inline() {
+    _usage_icon=$usage_icon_pending
+    usage_icon_pending=""
+}
 if [ -n "$cache_block" ]; then
     [ -n "$limit_block" ] && limit_block+="${sep_sub}"
     limit_block+="${cache_block}"
@@ -655,7 +662,8 @@ if $use_builtin; then
         five_hour_pct=$builtin_five_hour_pct
         usage_meter_color_inline "$five_hour_pct"; five_hour_color=$_uc
         generate_usage_meter_inline "$five_hour_pct" 10; five_hour_meter=$_gm
-        limit_block+="${dim}5h: ${reset}${five_hour_color}${five_hour_meter} ${five_hour_pct}%${reset}"
+        take_usage_icon_inline
+        limit_block+="${_usage_icon}${dim}5h: ${reset}${five_hour_color}${five_hour_meter} ${five_hour_pct}%${reset}"
         if [ -n "$builtin_five_hour_reset" ] && [ "$builtin_five_hour_reset" != "null" ]; then
             five_hour_reset=$(date -j -r "$builtin_five_hour_reset" +"%H:%M" 2>/dev/null || date -d "@$builtin_five_hour_reset" +"%H:%M" 2>/dev/null)
             [ -n "$five_hour_reset" ] && limit_block+=" ${dim}@${five_hour_reset}${reset}"
@@ -666,7 +674,8 @@ if $use_builtin; then
         usage_meter_color_inline "$seven_day_pct"; seven_day_color=$_uc
         generate_usage_meter_inline "$seven_day_pct" 10; seven_day_meter=$_gm
         [ -n "$limit_block" ] && limit_block+="${sep_sub}"
-        limit_block+="${dim}7d: ${reset}${seven_day_color}${seven_day_meter} ${seven_day_pct}%${reset}"
+        take_usage_icon_inline
+        limit_block+="${_usage_icon}${dim}7d: ${reset}${seven_day_color}${seven_day_meter} ${seven_day_pct}%${reset}"
         if [ -n "$builtin_seven_day_reset" ] && [ "$builtin_seven_day_reset" != "null" ]; then
             seven_day_reset=$(date -j -r "$builtin_seven_day_reset" +"%b %-d, %H:%M" 2>/dev/null || date -d "@$builtin_seven_day_reset" +"%b %-d, %H:%M" 2>/dev/null)
             [ -n "$seven_day_reset" ] && limit_block+=" ${dim}@${seven_day_reset}${reset}"
@@ -679,7 +688,8 @@ elif [ "${_ud[0]}" = "OK" ]; then
     five_hour_reset=${_ud[2]}
     usage_meter_color_inline "$five_hour_pct"; _color5=$_uc
     generate_usage_meter_inline "$five_hour_pct" 10; _meter5=$_gm
-    limit_block+="${dim}5h: ${reset}${_color5}${_meter5} ${five_hour_pct}%${reset}"
+    take_usage_icon_inline
+    limit_block+="${_usage_icon}${dim}5h: ${reset}${_color5}${_meter5} ${five_hour_pct}%${reset}"
     [ -n "$five_hour_reset" ] && limit_block+=" ${dim}@${five_hour_reset}${reset}"
 
     seven_day_pct=$(_num "${_ud[3]}")
@@ -699,7 +709,8 @@ elif [ "${_ud[0]}" = "OK" ]; then
     fi
 else
     [ -n "$limit_block" ] && limit_block+="${sep_sub}"
-    limit_block+="${dim}5h: -${reset}${sep_sub}${dim}7d: -${reset}"
+    take_usage_icon_inline
+    limit_block+="${_usage_icon}${dim}5h: -${reset}${sep_sub}${dim}7d: -${reset}"
 fi
 
 # The Fable weekly scope is appended independently of built-in 5h/7d data.
@@ -709,7 +720,7 @@ if [ -n "${_ud[9]}" ]; then
     fable_reset=${_ud[10]}
     usage_meter_color_inline "$fable_pct"; _colorF=$_uc
     generate_usage_meter_inline "$fable_pct" 10; _meterF=$_gm
-    limit_block+="${sep_sub}${dim}F5: ${reset}${_colorF}${_meterF} ${fable_pct}%${reset}"
+    limit_block+="${sep_sub}${dim}Fable 5: ${reset}${_colorF}${_meterF} ${fable_pct}%${reset}"
     [ -n "$fable_reset" ] && limit_block+=" ${dim}@${fable_reset}${reset}"
 fi
 
@@ -723,10 +734,60 @@ shopt -s extglob
 clean_out=${out//$'\033'\[*([0-9;])[a-zA-Z]/}
 clean_limit=${limit_block//$'\033'\[*([0-9;])[a-zA-Z]/}
 
+# Measure the candidate line in terminal columns, not Bash code points.
+#
+# `wc -L` is deliberately not used. Its widths come from the platform wcwidth(),
+# which disagrees with real terminals on exactly the characters this UI draws:
+# glibc 2.3x reports 📁/📊 as 1 column, counts the U+FE0F in ⚡️ as a second wide
+# char (⚡️ → 4), and treats East Asian Ambiguous · and › as 2. A probe character
+# cannot detect this — 🤖 happens to measure correctly on the same libc that gets
+# all of the above wrong, so the probe passes and the bad widths are trusted.
+# BSD `wc -L` is byte-oriented on top of that.
+#
+# jq is already a required dependency and `explode` decodes UTF-8 independently
+# of the caller's locale, so it is both the portable and the cheaper option (one
+# subprocess instead of a probe plus a measurement). The ranges below cover
+# combining/format marks used here, East Asian wide text, and modern emoji. If
+# jq unexpectedly fails, code-point length remains a conservative fallback: it
+# may wrap early but will not overflow.
+terminal_width_inline() {
+    local text=$1 measured
+    measured=$(printf '%s' "$text" | jq -Rs '
+      def zero_width:
+        (768 <= . and . <= 879)
+        or (8203 <= . and . <= 8207)
+        or (8234 <= . and . <= 8238)
+        or (8288 <= . and . <= 8303)
+        or (65024 <= . and . <= 65039);
+      def wide:
+        (4352 <= . and . <= 4447)
+        or . == 9001 or . == 9002
+        or . == 9889
+        or (11904 <= . and . <= 42191 and . != 12351)
+        or (44032 <= . and . <= 55203)
+        or (63744 <= . and . <= 64255)
+        or (65040 <= . and . <= 65049)
+        or (65072 <= . and . <= 65135)
+        or (65280 <= . and . <= 65376)
+        or (65504 <= . and . <= 65510)
+        or (127744 <= . and . <= 129791)
+        or (131072 <= . and . <= 262141);
+      reduce (explode[]) as $cp
+        (0; . + ($cp | if zero_width then 0 elif wide then 2 else 1 end))
+    ' 2>/dev/null)
+    measured=${measured//[[:space:]]/}
+    if [[ "$measured" =~ ^[0-9]+$ ]]; then
+        _terminal_width=$measured
+    else
+        _terminal_width=${#text}
+    fi
+}
+
 # Validate COLUMNS as positive integer; fall back to 100 otherwise.
 # Prevents `[ -gt "wide" ]` style errors leaking to stderr.
 if [[ "$COLUMNS" =~ ^[1-9][0-9]*$ ]]; then term_width=$COLUMNS; else term_width=100; fi
-total_visual_len=$((${#clean_out} + ${#clean_limit} + 5))
+terminal_width_inline "${clean_out} │ ${clean_limit}"
+total_visual_len=$_terminal_width
 
 final_output=""
 if [ "$total_visual_len" -gt "$term_width" ] && [ -n "$limit_block" ]; then

@@ -30,14 +30,16 @@ Copy `claudeStatusLine.sh` to `~/.claude`, then add to `settings.json`:
 ## Example
 
 ```
-📁 project_dir › 🌿 feat-008a [+2|-1] │ Opus 4.7 · effort: high │ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · F5: ▓▓▓░░░░░░░ 30% @Apr 24, 08:00 · extra: $1.23/$10.00
+📁 project_dir › 🌿 feat-008a [+2|-1] │ 🤖 Opus 4.7 · 🧠 high │ ⚡️ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 📊 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · Fable 5: ▓▓▓░░░░░░░ 30% @Apr 24, 08:00 · extra: $1.23/$10.00
 ```
 
 When the line exceeds the terminal width, it wraps:
 ```
-📁 project_dir › 🌿 feat-008a [+2|-1] │ Opus 4.7 · effort: high
-└─ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · F5: ▓▓▓░░░░░░░ 30% @Apr 24, 08:00 · extra: $1.23/$10.00
+📁 project_dir › 🌿 feat-008a [+2|-1] │ 🤖 Opus 4.7 · 🧠 high
+└─ ⚡️ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 📊 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · Fable 5: ▓▓▓░░░░░░░ 30% @Apr 24, 08:00 · extra: $1.23/$10.00
 ```
+
+The semantic icons identify each information group without changing the existing layout: `🤖` model, `🧠` effort, `📁` workspace, `🌿` Git, `⚡️` context window, and one `📊` for the complete rate-limit group. The vocabulary is informed by [`best-claude-hud`](docs/research/best-claude-hud-layout-and-icons.md); this script keeps its own wrapping and meter UI.
 
 ## Usage meter style
 
@@ -59,11 +61,11 @@ On Windows with Git Bash, use:
 "command": "STATUSLINE_USAGE_STYLE=dots bash /c/Users/<USER>/.claude/claudeStatusLine.sh"
 ```
 
-Dot mode always uses 10 positions: `●` is used and dim `○` is available. The row color communicates utilization: green below 50%, orange at 50–69%, yellow at 70–89%, and red at 90% or above. Any value other than `dots` falls back to `bar`.
+Dot mode always uses 10 positions separated by one space: `● ● ● ○ ○ ○ ○ ○ ○ ○`. The default bar remains contiguous: `▓▓▓░░░░░░░`. In dot mode, `●` is used and dim `○` is available. The row color communicates utilization: green below 50%, orange at 50–69%, yellow at 70–89%, and red at 90% or above. Any value other than `dots` falls back to `bar`.
 
 ## Fable weekly usage
 
-`F5` is shown only when the Anthropic OAuth usage response contains a matching `limits[]` entry with `kind: "weekly_scoped"` and `scope.model.display_name: "Fable"`. Claude Code's built-in rate-limit input does not include per-model weekly limits, so the script reuses its secured OAuth credentials and 60-second usage cache to retrieve this optional value. Missing credentials, network failures, or accounts without a Fable scope leave the block hidden.
+`Fable 5` is shown only when the Anthropic OAuth usage response contains a matching `limits[]` entry with `kind: "weekly_scoped"` and `scope.model.display_name: "Fable"`. Claude Code's built-in rate-limit input does not include per-model weekly limits, so the script reuses its secured OAuth credentials and 60-second usage cache to retrieve this optional value. Missing credentials, network failures, or accounts without a Fable scope leave the block hidden.
 
 ### Cache block
 

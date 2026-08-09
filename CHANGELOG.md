@@ -8,6 +8,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Usage meter spacing**：dot 模式的 10 個 `●` / `○` 位置各以一個空格分隔；bar 模式維持連續 `▓░` 色塊
+- **Semantic emoji**：既有布局加入 `🤖` model、`🧠` effort、`⚡️` context 與單一 `📊` rate-limit group；原有 `📁` workspace、`🌿` Git 保持不變
+- **Fable label**：將不易辨識的 `F5` 改為完整名稱 `Fable 5`
+
 ## [v1.2.0] - 2026-08-09
 
 ### Added
