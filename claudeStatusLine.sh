@@ -4,16 +4,17 @@
 # 預期效果範例 (Expected Output Example):
 #
 # [單行顯示 Single Line] (當終端機夠寬時):
-# 📁 project_dir › 🌿 feat-008a [+2|-1] │ Opus 4.7 · effort: high │ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · extra: $1.23/$10.00
+# 📁 project_dir › 🌿 feat-008a [+2|-1] │ Opus 4.7 · effort: high │ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · F5: ▓▓▓░░░░░░░ 30% @Apr 24, 08:00 · extra: $1.23/$10.00
 #
 # [雙行顯示 Two Lines] (當資訊字串長度超過終端機寬度時自動折行):
 # 📁 project_dir › 🌿 feat-008a [+2|-1] │ Opus 4.7 · effort: high
-# └─ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · extra: $1.23/$10.00
+# └─ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · F5: ▓▓▓░░░░░░░ 30% @Apr 24, 08:00 · extra: $1.23/$10.00
 #
 # 區塊說明:
 #   Cache <hit%> <MM:SS>  — 命中率 = cache_read / (input + cache_creation + cache_read)
 #                          綠 ≥50% / 灰 <50%；TTL 從上次響應倒數 1 小時
 #                          顏色: 0-20m 綠 / 20-40m 黃 / 40-55m 紅 / 最後 5m 閃紅 / 過期 exp 灰
+#   STATUSLINE_USAGE_STYLE=dots — context/5h/7d/F5 統一改為 10 顆 ●○；其他值維持 bar
 # =====================================================================
 
 set -f  # disable globbing
@@ -37,6 +38,7 @@ red=$'\033[38;2;255;100;100m'
 yellow=$'\033[38;2;255;230;80m'
 white=$'\033[38;2;240;240;240m'
 dim=$'\033[2m'
+dim_off=$'\033[22m'
 reset=$'\033[0m'
 bright_red=$'\033[38;2;255;50;50m'
 gray=$'\033[38;2;140;140;140m'
@@ -66,6 +68,21 @@ usage_color_inline() {
     fi
 }
 
+usage_meter_color_inline() {
+    local pct=$1
+    [[ "$pct" =~ ^[0-9]+$ ]] || pct=0
+    [ "$pct" -gt 100 ] && pct=100
+    if [ "$usage_style" = "dots" ]; then
+        if [ "$pct" -ge 90 ]; then _uc=$red
+        elif [ "$pct" -ge 70 ]; then _uc=$yellow
+        elif [ "$pct" -ge 50 ]; then _uc=$orange
+        else _uc=$green
+        fi
+    else
+        usage_color_inline "$pct"
+    fi
+}
+
 generate_bar_inline() {
     local pct=$1
     local bar_width=${2:-10}
@@ -75,6 +92,33 @@ generate_bar_inline() {
     _gb=""
     [ "$filled" -gt 0 ] && printf -v fill "%${filled}s" && _gb="${fill// /▓}"
     [ "$empty" -gt 0 ] && printf -v pad "%${empty}s" && _gb+="${pad// /░}"
+}
+
+# One switch controls every percentage meter (context, 5h, 7d, and Fable).
+# Unknown values deliberately fall back to the existing bar UI.
+usage_style=${STATUSLINE_USAGE_STYLE:-bar}
+[ "$usage_style" = "dots" ] || usage_style="bar"
+
+generate_usage_meter_inline() {
+    local pct=$1
+    local width=${2:-10}
+    [[ "$pct" =~ ^[0-9]+$ ]] || pct=0
+    [ "$pct" -gt 100 ] && pct=100
+
+    if [ "$usage_style" = "dots" ]; then
+        local filled=$((pct * width / 100))
+        local empty=$((width - filled))
+        local fill="" pad=""
+        _gm=""
+        [ "$filled" -gt 0 ] && printf -v fill "%${filled}s" && _gm="${fill// /●}"
+        if [ "$empty" -gt 0 ]; then
+            printf -v pad "%${empty}s"
+            _gm+="${dim}${pad// /○}${dim_off}"
+        fi
+    else
+        generate_bar_inline "$pct" "$width"
+        _gm=$_gb
+    fi
 }
 
 # Resolve config directory
@@ -233,9 +277,9 @@ esac
 # 這裡不再加入 sep_main，將由後續折行邏輯決定
 
 # 3. Context Window Usage (將作為 limit_block 的起點)
-usage_color_inline "$pct_used"; token_color=$_uc
-generate_bar_inline "$pct_used" 10; token_bar=$_gb
-context_block="${white}${used_tokens}${reset}${dim}/${total_tokens}${reset} ${dim}(${token_color}${token_bar} ${pct_used}%${reset}${dim})${reset}"
+usage_meter_color_inline "$pct_used"; token_color=$_uc
+generate_usage_meter_inline "$pct_used" 10; token_meter=$_gm
+context_block="${white}${used_tokens}${reset}${dim}/${total_tokens}${reset} ${dim}(${token_color}${token_meter} ${pct_used}%${reset}${dim})${reset}"
 
 
 # ===== OAuth & Rate Limits Fetching =====
@@ -368,49 +412,49 @@ cache_max_age=60
 needs_refresh=true
 usage_data=""
 
-if ! $use_builtin; then
-    # All disk reads and lock ops require a validated cache_dir. When
-    # _cache_safe is false, we fetch fresh from the network with no caching
-    # rather than touch the unvalidated path.
-    if $_cache_safe && [ -f "$cache_file" ] && [ -s "$cache_file" ]; then
-        cache_mtime=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0)
-        cache_age=$(( now - ${cache_mtime:-0} ))
-        if [ "$cache_age" -lt "$cache_max_age" ]; then needs_refresh=false; fi
-        usage_data=$(< "$cache_file")
+# OAuth usage remains necessary even when Claude Code supplies built-in 5h/7d
+# windows, because scoped weekly model limits (such as Fable) exist only in the
+# OAuth response's dynamic `limits` array.
+# All disk reads and lock ops require a validated cache_dir. When _cache_safe is
+# false, fetch fresh from the network with no caching.
+if $_cache_safe && [ -f "$cache_file" ] && [ -s "$cache_file" ]; then
+    cache_mtime=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0)
+    cache_age=$(( now - ${cache_mtime:-0} ))
+    if [ "$cache_age" -lt "$cache_max_age" ]; then needs_refresh=false; fi
+    usage_data=$(< "$cache_file")
+fi
+# mkdir is atomic on POSIX → use as lock. Skip locking entirely when
+# _cache_safe is false (the lock dir would land in an unvalidated path).
+# Stale lock (>30s) auto-cleared in case a previous run crashed.
+_lock="${cache_file}.lock"
+if $needs_refresh; then
+    if $_cache_safe && [ -d "$_lock" ]; then
+        _lock_mtime=$(stat -c %Y "$_lock" 2>/dev/null || stat -f %m "$_lock" 2>/dev/null || echo 0)
+        [ $(( now - ${_lock_mtime:-0} )) -gt 30 ] && rmdir "$_lock" 2>/dev/null
     fi
-    # mkdir is atomic on POSIX → use as lock. Skip locking entirely when
-    # _cache_safe is false (the lock dir would land in an unvalidated path).
-    # Stale lock (>30s) auto-cleared in case a previous run crashed.
-    _lock="${cache_file}.lock"
-    if $needs_refresh; then
-        if $_cache_safe && [ -d "$_lock" ]; then
-            _lock_mtime=$(stat -c %Y "$_lock" 2>/dev/null || stat -f %m "$_lock" 2>/dev/null || echo 0)
-            [ $(( now - ${_lock_mtime:-0} )) -gt 30 ] && rmdir "$_lock" 2>/dev/null
-        fi
-        # When unsafe, skip the lock and just fetch — we won't write the
-        # response anywhere anyway, so concurrent fetches only waste API calls.
-        if ! $_cache_safe || mkdir "$_lock" 2>/dev/null; then
-            token=$(get_oauth_token)
-            if [ -n "$token" ] && [ "$token" != "null" ]; then
-                # Pass Authorization header via stdin --config to keep token out
-                # of argv (visible in ps/proc otherwise). --connect-timeout caps
-                # DNS/TCP stalls separately from total --max-time budget.
-                response=$(printf 'header = "Authorization: Bearer %s"\n' "$token" \
-                    | curl -s --config - \
-                        --max-time 10 \
-                        --connect-timeout 3 \
-                        -H "Accept: application/json" \
-                        -H "Content-Type: application/json" \
-                        -H "anthropic-beta: oauth-2025-04-20" \
-                        -H "User-Agent: claude-code/2.1.34" \
-                        "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
-                if [ -n "$response" ] && echo "$response" | jq -e '.five_hour' >/dev/null 2>&1; then
-                    usage_data="$response"
-                    _atomic_write "$cache_file" "$response"
-                fi
+    # When unsafe, skip the lock and just fetch — we won't write the
+    # response anywhere anyway, so concurrent fetches only waste API calls.
+    if ! $_cache_safe || mkdir "$_lock" 2>/dev/null; then
+        token=$(get_oauth_token)
+        if [ -n "$token" ] && [ "$token" != "null" ]; then
+            # Pass Authorization header via stdin --config to keep token out
+            # of argv (visible in ps/proc otherwise). --connect-timeout caps
+            # DNS/TCP stalls separately from total --max-time budget.
+            response=$(printf 'header = "Authorization: Bearer %s"\n' "$token" \
+                | curl -s --config - \
+                    --max-time 10 \
+                    --connect-timeout 3 \
+                    -H "Accept: application/json" \
+                    -H "Content-Type: application/json" \
+                    -H "anthropic-beta: oauth-2025-04-20" \
+                    -H "User-Agent: claude-code/2.1.34" \
+                    "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
+            if [ -n "$response" ] && echo "$response" | jq -e '.five_hour' >/dev/null 2>&1; then
+                usage_data="$response"
+                _atomic_write "$cache_file" "$response"
             fi
-            $_cache_safe && rmdir "$_lock" 2>/dev/null
         fi
+        $_cache_safe && rmdir "$_lock" 2>/dev/null
     fi
 fi
 
@@ -568,21 +612,50 @@ if [ -n "$cache_block" ]; then
     limit_block+="${cache_block}"
 fi
 
+# Parse the OAuth response once. Fable is a dynamic weekly_scoped entry rather
+# than a flat top-level key, so match it by scope.model.display_name.
+_ud=()
+show_extra=false
+if [ -n "$usage_data" ]; then
+    while IFS= read -r _ml || [ -n "$_ml" ]; do _ud+=("$_ml"); done < <(jq -r '
+      def clean_iso: sub("[.][0-9]+"; "") | sub("[+]00:00$"; "Z");
+      def months: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      def hm: . as $t | "\($t[3]|tostring|("0"+.)[-2:]):\($t[4]|tostring|("0"+.)[-2:])";
+      ([.limits[]?
+        | select(.kind == "weekly_scoped")
+        | select(((.scope.model.display_name // "") | ascii_downcase | gsub("^\\s+|\\s+$"; "")) == "fable")][0]) as $fable
+      | if .five_hour then
+          "OK",
+          (.five_hour.utilization | tonumber? // 0 | round),
+          (try (.five_hour.resets_at | clean_iso | fromdateiso8601 | localtime | hm) catch ""),
+          (.seven_day.utilization | tonumber? // 0 | round),
+          (try (.seven_day.resets_at | clean_iso | fromdateiso8601 | localtime | . as $t | "\(months[$t[1]]) \($t[2]), \($t|hm)") catch ""),
+          (.extra_usage.is_enabled // false),
+          (.extra_usage.utilization | tonumber? // 0 | round),
+          ((.extra_usage.used_credits | tonumber? // 0) / 100),
+          ((.extra_usage.monthly_limit | tonumber? // 0) / 100),
+          (if $fable then ($fable.percent | tonumber? // 0 | round) else "" end),
+          (if $fable then (try ($fable.resets_at | clean_iso | fromdateiso8601 | localtime | . as $t | "\(months[$t[1]]) \($t[2]), \($t|hm)") catch "") else "" end)
+        else "FAIL" end
+    ' <<< "$usage_data" 2>/dev/null)
+    for _i in "${!_ud[@]}"; do _ud[_i]=${_ud[_i]%$'\r'}; done
+fi
+
 if $use_builtin; then
-    # Capture presence (was the field provided at all?) BEFORE we coerce to a
-    # safe integer; otherwise a real 0% becomes indistinguishable from "missing"
-    # and the block silently disappears. _num still neutralises any malformed
-    # value before it reaches printf / arithmetic.
+    # Capture presence before coercion so a real 0% remains distinguishable
+    # from a missing field. Clamp hostile or future out-of-range values.
     _have_5h=false; [ -n "$builtin_five_hour_pct" ] && _have_5h=true
     _have_7d=false; [ -n "$builtin_seven_day_pct" ] && _have_7d=true
     builtin_five_hour_pct=$(_num "${builtin_five_hour_pct%%.*}")
     builtin_seven_day_pct=$(_num "${builtin_seven_day_pct%%.*}")
+    [ "$builtin_five_hour_pct" -gt 100 ] && builtin_five_hour_pct=100
+    [ "$builtin_seven_day_pct" -gt 100 ] && builtin_seven_day_pct=100
     if $_have_5h; then
         [ -n "$limit_block" ] && limit_block+="${sep_sub}"
         five_hour_pct=$builtin_five_hour_pct
-        usage_color_inline "$five_hour_pct"; five_hour_color=$_uc
-        generate_bar_inline "$five_hour_pct" 10; five_hour_bar=$_gb
-        limit_block+="${dim}5h: ${reset}${five_hour_color}${five_hour_bar} ${five_hour_pct}%${reset}"
+        usage_meter_color_inline "$five_hour_pct"; five_hour_color=$_uc
+        generate_usage_meter_inline "$five_hour_pct" 10; five_hour_meter=$_gm
+        limit_block+="${dim}5h: ${reset}${five_hour_color}${five_hour_meter} ${five_hour_pct}%${reset}"
         if [ -n "$builtin_five_hour_reset" ] && [ "$builtin_five_hour_reset" != "null" ]; then
             five_hour_reset=$(date -j -r "$builtin_five_hour_reset" +"%H:%M" 2>/dev/null || date -d "@$builtin_five_hour_reset" +"%H:%M" 2>/dev/null)
             [ -n "$five_hour_reset" ] && limit_block+=" ${dim}@${five_hour_reset}${reset}"
@@ -590,66 +663,58 @@ if $use_builtin; then
     fi
     if $_have_7d; then
         seven_day_pct=$builtin_seven_day_pct
-        usage_color_inline "$seven_day_pct"; seven_day_color=$_uc
-        generate_bar_inline "$seven_day_pct" 10; seven_day_bar=$_gb
+        usage_meter_color_inline "$seven_day_pct"; seven_day_color=$_uc
+        generate_usage_meter_inline "$seven_day_pct" 10; seven_day_meter=$_gm
         [ -n "$limit_block" ] && limit_block+="${sep_sub}"
-        limit_block+="${dim}7d: ${reset}${seven_day_color}${seven_day_bar} ${seven_day_pct}%${reset}"
+        limit_block+="${dim}7d: ${reset}${seven_day_color}${seven_day_meter} ${seven_day_pct}%${reset}"
         if [ -n "$builtin_seven_day_reset" ] && [ "$builtin_seven_day_reset" != "null" ]; then
             seven_day_reset=$(date -j -r "$builtin_seven_day_reset" +"%b %-d, %H:%M" 2>/dev/null || date -d "@$builtin_seven_day_reset" +"%b %-d, %H:%M" 2>/dev/null)
             [ -n "$seven_day_reset" ] && limit_block+=" ${dim}@${seven_day_reset}${reset}"
         fi
     fi
-elif [ -n "$usage_data" ]; then
-    # Single jq pass — extracts everything plus formats reset times via strftime
-    # jq does the date formatting (via localtime + manual month-name array to avoid
-    # locale-dependent %b glyphs from MSYS jq). ISO cleanup makes +00:00 / fractional
-    # seconds parseable by fromdateiso8601.
-    _ud=()
-    while IFS= read -r _ml || [ -n "$_ml" ]; do _ud+=("$_ml"); done < <(jq -r '
-      def clean_iso: sub("[.][0-9]+"; "") | sub("[+]00:00$"; "Z");
-      def months: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-      def hm: . as $t | "\($t[3]|tostring|("0"+.)[-2:]):\($t[4]|tostring|("0"+.)[-2:])";
-      if .five_hour then
-        "OK",
-        (.five_hour.utilization // 0 | round),
-        (try (.five_hour.resets_at | clean_iso | fromdateiso8601 | localtime | hm) catch ""),
-        (.seven_day.utilization // 0 | round),
-        (try (.seven_day.resets_at | clean_iso | fromdateiso8601 | localtime | . as $t | "\(months[$t[1]]) \($t[2]), \($t|hm)") catch ""),
-        (.extra_usage.is_enabled // false),
-        (.extra_usage.utilization // 0 | round),
-        ((.extra_usage.used_credits // 0) / 100),
-        ((.extra_usage.monthly_limit // 0) / 100)
-      else "FAIL" end
-    ' <<< "$usage_data" 2>/dev/null)
-    for _i in "${!_ud[@]}"; do _ud[_i]=${_ud[_i]%$'\r'}; done
+elif [ "${_ud[0]}" = "OK" ]; then
+    [ -n "$limit_block" ] && limit_block+="${sep_sub}"
+    five_hour_pct=$(_num "${_ud[1]}")
+    [ "$five_hour_pct" -gt 100 ] && five_hour_pct=100
+    five_hour_reset=${_ud[2]}
+    usage_meter_color_inline "$five_hour_pct"; _color5=$_uc
+    generate_usage_meter_inline "$five_hour_pct" 10; _meter5=$_gm
+    limit_block+="${dim}5h: ${reset}${_color5}${_meter5} ${five_hour_pct}%${reset}"
+    [ -n "$five_hour_reset" ] && limit_block+=" ${dim}@${five_hour_reset}${reset}"
 
-    if [ "${_ud[0]}" = "OK" ]; then
-        [ -n "$limit_block" ] && limit_block+="${sep_sub}"
-        five_hour_pct=${_ud[1]}
-        five_hour_reset=${_ud[2]}
-        usage_color_inline "$five_hour_pct"; _color5=$_uc
-        generate_bar_inline "$five_hour_pct" 10; _bar5=$_gb
-        limit_block+="${dim}5h: ${reset}${_color5}${_bar5} ${five_hour_pct}%${reset}"
-        [ -n "$five_hour_reset" ] && limit_block+=" ${dim}@${five_hour_reset}${reset}"
+    seven_day_pct=$(_num "${_ud[3]}")
+    [ "$seven_day_pct" -gt 100 ] && seven_day_pct=100
+    seven_day_reset=${_ud[4]}
+    usage_meter_color_inline "$seven_day_pct"; _color7=$_uc
+    generate_usage_meter_inline "$seven_day_pct" 10; _meter7=$_gm
+    limit_block+="${sep_sub}${dim}7d: ${reset}${_color7}${_meter7} ${seven_day_pct}%${reset}"
+    [ -n "$seven_day_reset" ] && limit_block+=" ${dim}@${seven_day_reset}${reset}"
 
-        seven_day_pct=${_ud[3]}
-        seven_day_reset=${_ud[4]}
-        usage_color_inline "$seven_day_pct"; _color7=$_uc
-        generate_bar_inline "$seven_day_pct" 10; _bar7=$_gb
-        limit_block+="${sep_sub}${dim}7d: ${reset}${_color7}${_bar7} ${seven_day_pct}%${reset}"
-        [ -n "$seven_day_reset" ] && limit_block+=" ${dim}@${seven_day_reset}${reset}"
-
-        if [ "${_ud[5]}" = "true" ]; then
-            extra_pct=${_ud[6]}
-            printf -v extra_used "%.2f" "${_ud[7]:-0}" 2>/dev/null || extra_used="0.00"
-            printf -v extra_limit "%.2f" "${_ud[8]:-0}" 2>/dev/null || extra_limit="0.00"
-            usage_color_inline "$extra_pct"; _colorE=$_uc
-            limit_block+="${sep_sub}${dim}extra: ${reset}${_colorE}\$${extra_used}/\$${extra_limit}${reset}"
-        fi
+    if [ "${_ud[5]}" = "true" ]; then
+        extra_pct=$(_num "${_ud[6]}")
+        printf -v extra_used "%.2f" "${_ud[7]:-0}" 2>/dev/null || extra_used="0.00"
+        printf -v extra_limit "%.2f" "${_ud[8]:-0}" 2>/dev/null || extra_limit="0.00"
+        usage_color_inline "$extra_pct"; _colorE=$_uc
+        show_extra=true
     fi
 else
     [ -n "$limit_block" ] && limit_block+="${sep_sub}"
     limit_block+="${dim}5h: -${reset}${sep_sub}${dim}7d: -${reset}"
+fi
+
+# The Fable weekly scope is appended independently of built-in 5h/7d data.
+if [ -n "${_ud[9]}" ]; then
+    fable_pct=$(_num "${_ud[9]}")
+    [ "$fable_pct" -gt 100 ] && fable_pct=100
+    fable_reset=${_ud[10]}
+    usage_meter_color_inline "$fable_pct"; _colorF=$_uc
+    generate_usage_meter_inline "$fable_pct" 10; _meterF=$_gm
+    limit_block+="${sep_sub}${dim}F5: ${reset}${_colorF}${_meterF} ${fable_pct}%${reset}"
+    [ -n "$fable_reset" ] && limit_block+=" ${dim}@${fable_reset}${reset}"
+fi
+
+if $show_extra; then
+    limit_block+="${sep_sub}${dim}extra: ${reset}${_colorE}\$${extra_used}/\$${extra_limit}${reset}"
 fi
 
 # ===== 6. 動態折行處理 (Dynamic line break if too long) =====
