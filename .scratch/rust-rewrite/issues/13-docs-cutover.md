@@ -16,7 +16,7 @@ Blocked by: 12
 ## 驗收
 
 - [x] spec §9 驗收條件逐項打勾(依使用者保留項目明確標註 deferred)
-- [ ] merge `feat/rust-rewrite` → main,發佈 v2.0.0 release
+- [x] merge `feat/rust-rewrite` → main,發佈 v2.0.0 release
 
 ## Comments
 
@@ -27,3 +27,4 @@ Blocked by: 12
 - 實跑證據: `cargo build --release` 通過；`hyperfine --shell=none --input ... --warmup 5 --runs 30 target/release/cc-statusline`（macOS arm64、隔離 0700 XDG cache、完整 fixture）warm `1.7 ± 0.1 ms`、cold（OAuth cache 缺失、`security` 子行程）`11.4 ± 0.3 ms`；README 所列驗證指令另逐項執行並記錄於提交前檢查。
 - 驗收命令證據: `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all-targets`（73 單元 + 2 integration 全綠）、`cargo llvm-cov --all-targets --fail-under-lines 80`（總行覆蓋率 90.74%）通過；`(cd npm && npm test)`、`npm pack --ignore-scripts`、`sh -n install.sh`、`sh tests/test-install.sh`、`actionlint .github/workflows/ci.yml .github/workflows/release.yml` 與本地 manual checksum/extract 流程通過。
 - 依使用者指示，本 ticket 不處理 LICENSE 選擇、`v1-final` tag 與真實 Claude Code session；其餘範圍完成後等待驗證。
+- 最終驗收(orchestrator, 2026-08-23):v2.0.0 Release 發佈成功(run 32620143658),14 assets 齊全;npm i -g <release URL> 端到端實測通過——安裝後 binary SHA-256 與 release asset 一致(db9f7e6b...),postinstall 下載+驗證+落地全流程真實運作。註:新版 npm 對 install scripts 顯示 allow-scripts 警告(本次仍執行),README 後續可補充說明。→ 專案完成
