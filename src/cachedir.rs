@@ -12,6 +12,7 @@ pub trait Clock {
     fn now_epoch(&self) -> u64;
 }
 
+#[derive(Clone, Copy)]
 pub struct SystemClock;
 
 impl Clock for SystemClock {
@@ -23,7 +24,7 @@ impl Clock for SystemClock {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum CacheDir {
     Safe(PathBuf),
     Unsafe,

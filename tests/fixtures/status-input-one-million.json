@@ -1,0 +1,19 @@
+{
+  "model": {
+    "display_name": "Opus 4.5"
+  },
+  "effort": {
+    "level": "high"
+  },
+  "context_window": {
+    "context_window_size": 1000000,
+    "current_usage": {
+      "input_tokens": 200000,
+      "cache_creation_input_tokens": 50000,
+      "cache_read_input_tokens": 0
+    },
+    "used_percentage": 25
+  },
+  "session_id": "mock-session-one-million",
+  "cwd": "/tmp/mock-project"
+}

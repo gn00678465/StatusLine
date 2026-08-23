@@ -63,6 +63,7 @@ pub trait GitRunner: Send + Sync + 'static {
     fn run_status(&self, repository: &Path) -> GitRunResult;
 }
 
+#[derive(Clone, Copy)]
 pub struct CommandGitRunner;
 
 impl GitRunner for CommandGitRunner {

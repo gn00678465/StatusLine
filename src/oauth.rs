@@ -39,6 +39,7 @@ pub trait HttpClient {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct SystemCredentialStore;
 
 impl CredentialStore for SystemCredentialStore {
@@ -94,6 +95,7 @@ impl CredentialStore for SystemCredentialStore {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct UreqHttpClient;
 
 impl HttpClient for UreqHttpClient {

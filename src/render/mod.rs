@@ -7,7 +7,7 @@ pub mod meter;
 
 use crate::gitstatus::GitStatus;
 use crate::ttl::CacheTtlStatus;
-use crate::width::display_width;
+use crate::width::wrap_status_line;
 
 use self::blocks::{render_cache, render_context, render_model, render_workspace, ContextUsage};
 use self::color::{DIM, RESET};
@@ -20,6 +20,7 @@ pub struct RenderContext<'a> {
     pub effort_level: Option<&'a str>,
     pub context_usage: ContextUsage,
     pub cache_status: CacheTtlStatus,
+    pub limits: &'a str,
     pub meter_style: MeterStyle,
     pub columns: usize,
 }
@@ -33,14 +34,17 @@ pub fn render(context: RenderContext<'_>) -> String {
     };
     let context_block = render_context(context.context_usage, context.meter_style);
     let cache_block = render_cache(context.cache_status);
-    let detail_block = if cache_block.is_empty() {
-        context_block
-    } else {
-        format!("{context_block} {DIM}·{RESET} {cache_block}")
-    };
-    let inline_width = display_width(&format!("{header} │ {detail_block}"));
+    let mut detail_blocks = vec![context_block];
+    if !cache_block.is_empty() {
+        detail_blocks.push(cache_block);
+    }
+    if !context.limits.is_empty() {
+        detail_blocks.push(context.limits.to_owned());
+    }
+    let detail_block = detail_blocks.join(&format!(" {DIM}·{RESET} "));
+    let wrapped = wrap_status_line(&header, &detail_block, context.columns);
 
-    if inline_width > context.columns {
+    if wrapped.contains('\n') {
         format!("{header}\n{DIM}└─{RESET} {detail_block}")
     } else {
         format!("{header} {DIM}│{RESET} {detail_block}")
@@ -87,6 +91,7 @@ mod tests {
                     color: TtlColor::Green,
                 }),
             },
+            limits: "",
             meter_style: MeterStyle::Bar,
             columns: 100,
         });
@@ -120,6 +125,7 @@ mod tests {
                 hit_rate: None,
                 ttl: None,
             },
+            limits: "",
             meter_style: MeterStyle::Dots,
             columns: 100,
         });
@@ -147,6 +153,7 @@ mod tests {
                 hit_rate: None,
                 ttl: None,
             },
+            limits: "",
             meter_style: MeterStyle::Dots,
             columns: 1,
         });
@@ -154,6 +161,36 @@ mod tests {
         assert_eq!(
             strip_ansi(&rendered),
             "📁 project │ 🤖 Haiku\n└─ ⚡️ 0/200k (○○○○○○○○○○ 0%)"
+        );
+    }
+
+    #[test]
+    fn renders_rate_limits_after_context_and_cache_blocks() {
+        let git_status = GitStatus::default();
+        let rendered = render(RenderContext {
+            cwd: None,
+            git_status: &git_status,
+            model_name: "Haiku",
+            effort_level: None,
+            context_usage: ContextUsage {
+                input_tokens: 0,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                context_window_size: 200_000,
+                official_percentage: None,
+            },
+            cache_status: CacheTtlStatus {
+                hit_rate: None,
+                ttl: None,
+            },
+            limits: "📊 5h: - · 7d: -",
+            meter_style: MeterStyle::Bar,
+            columns: 100,
+        });
+
+        assert_eq!(
+            strip_ansi(&rendered),
+            "🤖 Haiku │ ⚡️ 0/200k (░░░░░░░░░░ 0%) · 📊 5h: - · 7d: -"
         );
     }
 }

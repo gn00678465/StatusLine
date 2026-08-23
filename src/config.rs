@@ -29,7 +29,7 @@ impl Config {
         )
     }
 
-    fn from_values(
+    pub(crate) fn from_values(
         usage_style: Option<&str>,
         git_cache_ttl: Option<&str>,
         columns: Option<&str>,

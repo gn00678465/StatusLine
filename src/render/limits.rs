@@ -27,6 +27,7 @@ pub trait LocalOffset {
     fn offset_seconds(&self, epoch_seconds: i64) -> i32;
 }
 
+#[derive(Clone, Copy)]
 pub struct SystemLocalOffset;
 
 impl LocalOffset for SystemLocalOffset {
