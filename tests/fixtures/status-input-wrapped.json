@@ -1,0 +1,19 @@
+{
+  "model": {
+    "display_name": "Claude Enterprise Extremely Long Model Name"
+  },
+  "effort": {
+    "level": "xhigh"
+  },
+  "context_window": {
+    "context_window_size": 1000000,
+    "current_usage": {
+      "input_tokens": 400000,
+      "cache_creation_input_tokens": 100000,
+      "cache_read_input_tokens": 100000
+    },
+    "used_percentage": 60
+  },
+  "session_id": "mock-session-wrapped",
+  "cwd": "/tmp/mock-project"
+}

@@ -1,71 +1,156 @@
 name: Release
 
-# Push 形如 v*（v1.1.0、v2.0.0-rc1）的 tag 時，自動從 CHANGELOG.md 抽出對應段落建立 GitHub Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
+  workflow_dispatch:
 
 permissions:
-  contents: write   # gh release create 需要寫入權限
+  contents: write
 
 jobs:
-  release:
+  build:
+    name: Build ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset: cc-statusline-darwin-arm64.tar.gz
+            binary: cc-statusline
+            zigbuild: false
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset: cc-statusline-darwin-x64.tar.gz
+            binary: cc-statusline
+            zigbuild: false
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            asset: cc-statusline-linux-arm64-musl.tar.gz
+            binary: cc-statusline
+            zigbuild: true
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset: cc-statusline-linux-x64-musl.tar.gz
+            binary: cc-statusline
+            zigbuild: true
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            asset: cc-statusline-win32-arm64.zip
+            binary: cc-statusline.exe
+            zigbuild: false
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: cc-statusline-win32-x64.zip
+            binary: cc-statusline.exe
+            zigbuild: false
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: goto-bus-stop/setup-zig@v2
+        if: matrix.zigbuild
+      - name: Install cargo-zigbuild
+        if: matrix.zigbuild
+        run: cargo install cargo-zigbuild --locked
+      - name: Build release binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.zigbuild }}" = "true" ]; then
+            cargo zigbuild --release --target "${{ matrix.target }}"
+          else
+            cargo build --release --target "${{ matrix.target }}"
+          fi
+      - name: Package tarball
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist/stage
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/stage/${{ matrix.binary }}"
+          tar -C dist/stage -czf "dist/${{ matrix.asset }}" "${{ matrix.binary }}"
+          hash=$(shasum -a 256 "dist/${{ matrix.asset }}" | awk '{print $1}')
+          printf '%s  %s\n' "$hash" "${{ matrix.asset }}" > "dist/${{ matrix.asset }}.sha256"
+      - name: Package zip
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/stage | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/stage/${{ matrix.binary }}"
+          Compress-Archive -Path "dist/stage/${{ matrix.binary }}" -DestinationPath "dist/${{ matrix.asset }}"
+          $hash = (Get-FileHash -Algorithm SHA256 "dist/${{ matrix.asset }}").Hash.ToLowerInvariant()
+          $sidecar = "$hash  ${{ matrix.asset }}`n"
+          [System.IO.File]::WriteAllText(
+            "dist/${{ matrix.asset }}.sha256",
+            $sidecar,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            dist/${{ matrix.asset }}
+            dist/${{ matrix.asset }}.sha256
+          if-no-files-found: error
+
+  npm-package:
+    name: Package npm installer
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
         with:
-          fetch-depth: 0   # 完整歷史，方便產生 compare link
-
-      - name: Resolve tag
-        id: tag
+          node-version: 22
+      - name: Pack installer without lifecycle execution
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Tag: $TAG"
+          mkdir -p dist
+          npm pack --ignore-scripts --pack-destination dist ./npm
+          mv dist/gn00678465-cc-statusline-*.tgz dist/cc-statusline-npm.tgz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cc-statusline-npm.tgz
+          path: dist/cc-statusline-npm.tgz
+          if-no-files-found: error
 
-      - name: Extract changelog section
-        id: changelog
+  installer-script:
+    name: Package POSIX installer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate POSIX installer
+        run: sh -n install.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: install.sh
+          path: install.sh
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: [build, npm-package, installer-script]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v5
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Verify release asset set
         run: |
-          TAG="${{ steps.tag.outputs.tag }}"
-          # 抽 ## [vX.Y.Z] 標題到下一個 ## [ 之前的所有行；剝除前後空白行
-          # 用 index() 做字面比對，避開 regex 把 [v1.1.0] 當字元類別的問題
-          awk -v ver="$TAG" '
-            index($0, "## [" ver "]") == 1 { found=1; next }
-            found && /^## \[/              { exit }
-            found                          { print }
-          ' CHANGELOG.md \
-            | awk 'NF { found=1 } found' \
-            | tac | awk 'NF { found=1 } found' | tac \
-            > release-notes.md
-
-          if [ ! -s release-notes.md ]; then
-            echo "::error::No CHANGELOG.md section found for $TAG; add a '## [$TAG] - YYYY-MM-DD' header before tagging."
-            exit 1
-          fi
-
-          echo "--- extracted release notes ---"
-          cat release-notes.md
-          echo "--- end ---"
-
-      - name: Detect prerelease
-        id: prerelease
-        run: |
-          TAG="${{ steps.tag.outputs.tag }}"
-          # 含 -rc / -beta / -alpha 之類 → prerelease
-          if [[ "$TAG" =~ -(rc|alpha|beta|preview) ]]; then
-            echo "flag=--prerelease" >> "$GITHUB_OUTPUT"
-          else
-            echo "flag=--latest" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Create GitHub Release
+          find release-assets -maxdepth 1 -type f -print | sort
+          count=$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')
+          test "$count" = 14
+          test -f release-assets/cc-statusline-npm.tgz
+          test -f release-assets/install.sh
+      - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
         run: |
-          TAG="${{ steps.tag.outputs.tag }}"
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --notes-file release-notes.md \
-            ${{ steps.prerelease.outputs.flag }}
+          gh release create "$TAG" release-assets/* --title "$TAG" --generate-notes

@@ -1,0 +1,15 @@
+{
+  "model": {
+    "display_name": "Haiku 3.5"
+  },
+  "context_window": {
+    "context_window_size": 200000,
+    "current_usage": {
+      "input_tokens": 10000,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 10000
+    }
+  },
+  "session_id": "mock-session-effort-missing",
+  "cwd": "/tmp/mock-project"
+}

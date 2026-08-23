@@ -1,0 +1,31 @@
+[package]
+name = "cc-statusline"
+version = "2.0.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+unicode-width = "0.2"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+[dev-dependencies]
+insta = "1"
+tempfile = "3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+expect_used = "deny"
+unwrap_used = "deny"
