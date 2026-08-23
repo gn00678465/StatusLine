@@ -10,7 +10,7 @@ mod oauth;
 mod render;
 mod ttl;
 mod update;
-mod width;
+pub mod width;
 
 use std::io::Read;
 

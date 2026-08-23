@@ -96,5 +96,8 @@ mod tests {
 
         assert_eq!(negative_ttl.git_cache_ttl_seconds(), 2);
         assert_eq!(negative_ttl.columns(), 100);
+
+        let missing_columns = Config::from_values(None, None, None);
+        assert_eq!(missing_columns.columns(), 100);
     }
 }
