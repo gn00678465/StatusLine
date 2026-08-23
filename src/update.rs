@@ -275,7 +275,7 @@ mod tests {
             .path()
             .ok_or("missing safe cache directory")?
             .join(super::CACHE_NAME);
-        let cache_file = std::fs::File::open(cache_path)?;
+        let cache_file = std::fs::OpenOptions::new().write(true).open(cache_path)?;
         let stale_time = UNIX_EPOCH + Duration::from_secs(now.saturating_sub(86_400));
         cache_file.set_times(std::fs::FileTimes::new().set_modified(stale_time))?;
         let held_lock = cache_dir
