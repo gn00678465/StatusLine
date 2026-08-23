@@ -1,6 +1,6 @@
 # cc-statusline
 
-Version **2.0.0** is a single Rust binary for the Claude Code status line. It
+Version **2.0.1** is a single Rust binary for the Claude Code status line. It
 keeps the v1 layout while removing the runtime dependency on shell, `jq`, and
 network command-line tools. A redraw is safe to run at 1 Hz: cached work stays
 local, and network/keychain refreshes are bounded and fail closed.
@@ -9,21 +9,10 @@ local, and network/keychain refreshes are bounded and fail closed.
 
 All release assets are published on GitHub Releases. The three supported
 installation paths end at `~/.claude/cc-statusline/` (Windows uses the same
-directory under `%USERPROFILE%` and installs `cc-statusline.exe`).
+directory under `%USERPROFILE%` and installs `cc-statusline.exe`). For the
+least surprising setup, use the POSIX installer first.
 
-### npm installer
-
-```sh
-npm install -g https://github.com/gn00678465/StatusLine/releases/latest/download/cc-statusline-npm.tgz
-```
-
-The package is an installer, not a JavaScript runtime wrapper. Its postinstall
-script selects the native platform asset, verifies its `.sha256` sidecar with
-Node's built-in `crypto`, and extracts the binary. `npm install --ignore-scripts`
-intentionally does not install a binary; the package prints a manual-install
-hint in that case.
-
-### POSIX installer
+### POSIX installer (recommended)
 
 ```sh
 curl -fsSL https://github.com/gn00678465/StatusLine/releases/latest/download/install.sh | sh
@@ -32,6 +21,47 @@ curl -fsSL https://github.com/gn00678465/StatusLine/releases/latest/download/ins
 `install.sh` supports `curl` or `wget`, verifies the matching SHA-256 sidecar,
 and installs the archive selected by `uname`. A download or verification error
 prints the release URL and the manual installation directory.
+
+### npm installer
+
+```sh
+npm install -g --allow-remote=all --allow-scripts=https://github.com/gn00678465/StatusLine/releases/latest/download/cc-statusline-npm.tgz https://github.com/gn00678465/StatusLine/releases/latest/download/cc-statusline-npm.tgz
+```
+
+The package is an installer, not a JavaScript runtime wrapper. Its postinstall
+script selects the native platform asset, verifies its `.sha256` sidecar with
+Node's built-in `crypto`, and extracts the binary. npm 12 defaults remote
+tarball fetching to `allow-remote=none` and install scripts to blocked, so both
+flags are explicit here. npm's warning may suggest
+`--allow-scripts=@gn00678465/cc-statusline`, but that package-name form does
+not match a remote tarball; the complete resolved URL above is required. npm
+versions before 12 silently ignore these two newer flags. See the
+[npm 12 allow-scripts research §1](docs/research/npm-allow-scripts.md#1-摘要結論與建議)
+for the tested behavior and rationale.
+
+Other package managers gate install scripts too, each with its own allow
+syntax. Beware pnpm 11: without the flag it skips the postinstall **silently**
+(exit 0, no warning, no binary). Tested commands:
+
+```sh
+# pnpm 11.x (the allow-build key must embed the full URL)
+pnpm add -g \
+  --allow-build='@gn00678465/cc-statusline@https://github.com/gn00678465/StatusLine/releases/latest/download/cc-statusline-npm.tgz' \
+  https://github.com/gn00678465/StatusLine/releases/latest/download/cc-statusline-npm.tgz
+
+# pnpm 10.x (package-name form; incompatible with the pnpm 11 syntax above)
+pnpm add -g --allow-build=@gn00678465/cc-statusline \
+  https://github.com/gn00678465/StatusLine/releases/latest/download/cc-statusline-npm.tgz
+
+# bun
+bun add -g --trust https://github.com/gn00678465/StatusLine/releases/latest/download/cc-statusline-npm.tgz
+
+# yarn classic (no gate, no flag needed)
+yarn global add https://github.com/gn00678465/StatusLine/releases/latest/download/cc-statusline-npm.tgz
+```
+
+Details and per-tool test evidence:
+[research §6](docs/research/npm-allow-scripts.md#6-其他套件管理器pnpm--bun--yarn).
 
 ### Manual download
 

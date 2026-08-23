@@ -11,6 +11,11 @@ const zlib = require("node:zlib");
 
 const installer = path.join(__dirname, "postinstall.js");
 const binaryContents = Buffer.from("statusline test binary\n", "utf8");
+const releaseTarballUrl =
+    "https://github.com/gn00678465/StatusLine/releases/latest/download/cc-statusline-npm.tgz";
+const npmInstallCommand = `npm install -g --allow-remote=all --allow-scripts=${releaseTarballUrl} ${releaseTarballUrl}`;
+const shellInstallCommand =
+    "curl -fsSL https://github.com/gn00678465/StatusLine/releases/latest/download/install.sh | sh";
 
 function assetForCurrentPlatform() {
     const targets = {
@@ -188,7 +193,8 @@ async function rejects_a_tampered_archive_before_installing() {
 
         assert.equal(result.status, 1);
         assert.match(result.stderr, /SHA-256 verification failed/);
-        assert.match(result.stderr, /Manual install:/);
+        assert.ok(result.stderr.includes(npmInstallCommand));
+        assert.ok(result.stderr.includes(shellInstallCommand));
         assert.equal(fs.existsSync(path.join(home, ".claude", "cc-statusline", binaryName)), false);
     } finally {
         await server.close();
@@ -243,7 +249,9 @@ async function explains_how_to_recover_from_ignore_scripts() {
 
         assert.equal(result.status, 1);
         assert.match(result.stderr, /--ignore-scripts/);
-        assert.match(result.stderr, /Manual install:/);
+        assert.ok(result.stderr.includes(npmInstallCommand));
+        assert.ok(result.stderr.includes(shellInstallCommand));
+        assert.equal(result.stderr.includes("--allow-scripts=@gn00678465/cc-statusline"), false);
     } finally {
         fs.rmSync(home, { recursive: true, force: true });
     }

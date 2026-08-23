@@ -10,6 +10,10 @@ const zlib = require("node:zlib");
 
 const PACKAGE_VERSION = require("./package.json").version;
 const REPOSITORY_URL = "https://github.com/gn00678465/StatusLine";
+const RELEASE_DOWNLOAD_URL = `${REPOSITORY_URL}/releases/latest/download`;
+const NPM_TARBALL_URL = `${RELEASE_DOWNLOAD_URL}/cc-statusline-npm.tgz`;
+const NPM_INSTALL_COMMAND = `npm install -g --allow-remote=all --allow-scripts=${NPM_TARBALL_URL} ${NPM_TARBALL_URL}`;
+const SHELL_INSTALL_COMMAND = `curl -fsSL ${RELEASE_DOWNLOAD_URL}/install.sh | sh`;
 const BINARY_NAME = process.platform === "win32" ? "cc-statusline.exe" : "cc-statusline";
 
 function assetFor(platform, architecture) {
@@ -226,7 +230,13 @@ async function install() {
 }
 
 function manualInstallHint() {
-    return `Manual install: download the matching asset from ${REPOSITORY_URL}/releases and place it in ~/.claude/cc-statusline/.`;
+    return [
+        "The npm postinstall script was skipped or blocked by npm.",
+        "Retry with the complete tarball URL and both npm policy flags:",
+        `  ${NPM_INSTALL_COMMAND}`,
+        "Or use the POSIX installer instead:",
+        `  ${SHELL_INSTALL_COMMAND}`,
+    ].join("\n");
 }
 
 async function main() {
