@@ -7,7 +7,7 @@ mod config;
 pub mod gitstatus;
 mod input;
 mod oauth;
-mod render;
+pub mod render;
 mod ttl;
 mod update;
 pub mod width;
