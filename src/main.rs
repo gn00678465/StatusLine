@@ -8,7 +8,7 @@ pub mod gitstatus;
 mod input;
 mod oauth;
 pub mod render;
-mod ttl;
+pub mod ttl;
 mod update;
 pub mod width;
 

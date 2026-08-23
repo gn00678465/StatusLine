@@ -5,9 +5,10 @@ pub mod color;
 pub mod meter;
 
 use crate::gitstatus::GitStatus;
+use crate::ttl::CacheTtlStatus;
 use crate::width::display_width;
 
-use self::blocks::{render_context, render_model, render_workspace, ContextUsage};
+use self::blocks::{render_cache, render_context, render_model, render_workspace, ContextUsage};
 use self::color::{DIM, RESET};
 use self::meter::MeterStyle;
 
@@ -17,6 +18,7 @@ pub struct RenderContext<'a> {
     pub model_name: &'a str,
     pub effort_level: Option<&'a str>,
     pub context_usage: ContextUsage,
+    pub cache_status: CacheTtlStatus,
     pub meter_style: MeterStyle,
     pub columns: usize,
 }
@@ -29,12 +31,18 @@ pub fn render(context: RenderContext<'_>) -> String {
         None => model,
     };
     let context_block = render_context(context.context_usage, context.meter_style);
-    let inline_width = display_width(&format!("{header} │ {context_block}"));
+    let cache_block = render_cache(context.cache_status);
+    let detail_block = if cache_block.is_empty() {
+        context_block
+    } else {
+        format!("{context_block} {DIM}·{RESET} {cache_block}")
+    };
+    let inline_width = display_width(&format!("{header} │ {detail_block}"));
 
     if inline_width > context.columns {
-        format!("{header}\n{DIM}└─{RESET} {context_block}")
+        format!("{header}\n{DIM}└─{RESET} {detail_block}")
     } else {
-        format!("{header} {DIM}│{RESET} {context_block}")
+        format!("{header} {DIM}│{RESET} {detail_block}")
     }
 }
 
@@ -45,6 +53,7 @@ mod tests {
     use crate::gitstatus::GitStatus;
     use crate::render::blocks::ContextUsage;
     use crate::render::meter::MeterStyle;
+    use crate::ttl::{CacheTtlStatus, TtlColor, TtlDisplay};
     use crate::width::strip_ansi;
 
     use super::{render, RenderContext};
@@ -70,6 +79,13 @@ mod tests {
                 context_window_size: 200_000,
                 official_percentage: Some(25.0),
             },
+            cache_status: CacheTtlStatus {
+                hit_rate: Some(50),
+                ttl: Some(TtlDisplay::Countdown {
+                    remaining_seconds: 3_600,
+                    color: TtlColor::Green,
+                }),
+            },
             meter_style: MeterStyle::Bar,
             columns: 100,
         });
@@ -77,7 +93,10 @@ mod tests {
         let plain = strip_ansi(&rendered);
         assert_snapshot!(
             &plain,
-            @r###"📁 project › 🌿 main [S1|W2|C3] │ 🤖 Sonnet · 🧠 xhigh │ ⚡️ 50k/200k (▓▓░░░░░░░░ 25%)"###
+            @r###"
+📁 project › 🌿 main [S1|W2|C3] │ 🤖 Sonnet · 🧠 xhigh
+└─ ⚡️ 50k/200k (▓▓░░░░░░░░ 25%) · Cache 50% 60:00
+"###
         );
     }
 
@@ -95,6 +114,10 @@ mod tests {
                 cache_read_tokens: 0,
                 context_window_size: 200_000,
                 official_percentage: None,
+            },
+            cache_status: CacheTtlStatus {
+                hit_rate: None,
+                ttl: None,
             },
             meter_style: MeterStyle::Dots,
             columns: 100,
@@ -118,6 +141,10 @@ mod tests {
                 cache_read_tokens: 0,
                 context_window_size: 200_000,
                 official_percentage: None,
+            },
+            cache_status: CacheTtlStatus {
+                hit_rate: None,
+                ttl: None,
             },
             meter_style: MeterStyle::Dots,
             columns: 1,

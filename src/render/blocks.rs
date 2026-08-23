@@ -1,8 +1,9 @@
 //! Renders individual status-line blocks.
 
-use super::color::{BLUE, CYAN, DIM, GREEN, ORANGE, RED, RESET, WHITE, YELLOW};
+use super::color::{BLUE, BRIGHT_RED, CYAN, DIM, GRAY, GREEN, ORANGE, RED, RESET, WHITE, YELLOW};
 use super::meter::{render_meter, MeterStyle};
 use crate::gitstatus::GitStatus;
+use crate::ttl::{CacheTtlStatus, TtlColor, TtlDisplay};
 
 pub fn format_tokens(tokens: u64) -> String {
     if tokens >= 1_000_000 {
@@ -93,6 +94,46 @@ pub fn render_context(usage: ContextUsage, meter_style: MeterStyle) -> String {
     format!("⚡️ {WHITE}{used_tokens}{RESET}{DIM}/{total_tokens}{RESET} {DIM}({meter}{DIM}){RESET}")
 }
 
+pub fn render_cache(status: CacheTtlStatus) -> String {
+    if status.hit_rate.is_none() && status.ttl.is_none() {
+        return String::new();
+    }
+
+    let mut block = format!("{DIM}Cache {RESET}");
+    if let Some(hit_rate) = status.hit_rate {
+        let hit_rate_color = if hit_rate >= 50 { GREEN } else { GRAY };
+        block.push_str(&format!("{hit_rate_color}{hit_rate}%{RESET}"));
+    }
+    if let Some(ttl) = status.ttl {
+        if status.hit_rate.is_some() {
+            block.push(' ');
+        }
+        let (ttl_color, ttl_text) = match ttl {
+            TtlDisplay::Countdown {
+                remaining_seconds,
+                color,
+            } => (ttl_color(color), format_ttl(remaining_seconds)),
+            TtlDisplay::Expired => (GRAY, "exp".to_owned()),
+        };
+        block.push_str(&format!("{ttl_color}{ttl_text}{RESET}"));
+    }
+
+    block
+}
+
+fn ttl_color(color: TtlColor) -> &'static str {
+    match color {
+        TtlColor::Green => GREEN,
+        TtlColor::Yellow => YELLOW,
+        TtlColor::Red => RED,
+        TtlColor::BrightRed => BRIGHT_RED,
+    }
+}
+
+fn format_ttl(remaining_seconds: u64) -> String {
+    format!("{}:{:02}", remaining_seconds / 60, remaining_seconds % 60)
+}
+
 fn context_percentage(usage: ContextUsage, current_tokens: u128) -> u8 {
     match usage.official_percentage {
         Some(percentage) if percentage.is_finite() => rounded_percentage(percentage),
@@ -122,11 +163,14 @@ fn fallback_context_percentage(current_tokens: u128, context_window_size: u64) -
 
 #[cfg(test)]
 mod tests {
-    use crate::render::color::{BLUE, DIM, ORANGE, RED, RESET, YELLOW};
+    use insta::assert_snapshot;
+
+    use crate::render::color::{BLUE, BRIGHT_RED, DIM, GRAY, ORANGE, RED, RESET, YELLOW};
     use crate::render::meter::MeterStyle;
+    use crate::ttl::{CacheTtlStatus, TtlColor, TtlDisplay};
     use crate::width::strip_ansi;
 
-    use super::{format_tokens, render_context, render_model, ContextUsage};
+    use super::{format_tokens, render_cache, render_context, render_model, ContextUsage};
 
     #[test]
     fn formats_token_counts_with_shell_rounding_boundaries() {
@@ -193,5 +237,66 @@ mod tests {
 
         assert_eq!(strip_ansi(&official), "⚡️ 80/1k (▓▓▓▓▓░░░░░ 50%)");
         assert_eq!(strip_ansi(&fallback), "⚡️ 2k/10k (▓░░░░░░░░░ 15%)");
+    }
+
+    #[test]
+    fn snapshots_cache_blocks_for_ttl_states_and_last_hit_rate() {
+        let fresh = render_cache(CacheTtlStatus {
+            hit_rate: Some(50),
+            ttl: Some(TtlDisplay::Countdown {
+                remaining_seconds: 3_600,
+                color: TtlColor::Green,
+            }),
+        });
+        let warning = render_cache(CacheTtlStatus {
+            hit_rate: Some(49),
+            ttl: Some(TtlDisplay::Countdown {
+                remaining_seconds: 2_400,
+                color: TtlColor::Yellow,
+            }),
+        });
+        let flashing = render_cache(CacheTtlStatus {
+            hit_rate: Some(50),
+            ttl: Some(TtlDisplay::Countdown {
+                remaining_seconds: 300,
+                color: TtlColor::BrightRed,
+            }),
+        });
+        let expired = render_cache(CacheTtlStatus {
+            hit_rate: Some(50),
+            ttl: Some(TtlDisplay::Expired),
+        });
+        let hit_rate_only = render_cache(CacheTtlStatus {
+            hit_rate: Some(49),
+            ttl: None,
+        });
+
+        let plain = strip_ansi(&[fresh, warning, flashing, expired, hit_rate_only].join("\n"));
+        assert_snapshot!(
+            &plain,
+            @r###"
+Cache 50% 60:00
+Cache 49% 40:00
+Cache 50% 5:00
+Cache 50% exp
+Cache 49%
+"###
+        );
+    }
+
+    #[test]
+    fn applies_threshold_and_flashing_colors_to_cache_fields() {
+        let cache = render_cache(CacheTtlStatus {
+            hit_rate: Some(49),
+            ttl: Some(TtlDisplay::Countdown {
+                remaining_seconds: 300,
+                color: TtlColor::BrightRed,
+            }),
+        });
+
+        assert_eq!(
+            cache,
+            format!("{DIM}Cache {RESET}{GRAY}49%{RESET} {BRIGHT_RED}5:00{RESET}")
+        );
     }
 }
