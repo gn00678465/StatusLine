@@ -2,7 +2,7 @@
 
 //! Entry point for the `cc-statusline` command-line application.
 
-mod cachedir;
+pub mod cachedir;
 mod config;
 mod gitstatus;
 mod input;
