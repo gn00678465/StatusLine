@@ -118,7 +118,12 @@ where
             }
         }
 
-        let stale_status = cached_status.map(|cached_status| cached_status.status);
+        let stale_status = cached_status.and_then(|cached_status| {
+            cached_status
+                .status
+                .is_repository
+                .then_some(cached_status.status)
+        });
         let lock = self
             .cache_dir
             .try_lock(&cache_name, LOCK_MAX_AGE_SECONDS, &self.clock);
@@ -129,7 +134,7 @@ where
         }
 
         let refresh_result = self.refresh(repository, stale_status);
-        if refresh_result.cacheable && refresh_result.status.is_repository {
+        if refresh_result.cacheable {
             self.write_cached_status(&cache_name, repository, &refresh_result.status);
         }
         drop(lock);
@@ -151,14 +156,26 @@ where
             GitRunResult::Completed {
                 stdout,
                 success: true,
-            } => RefreshResult {
-                status: parse_porcelain(&stdout),
-                cacheable: true,
-            },
+            } => {
+                let parsed_status = parse_porcelain(&stdout);
+                let status = if parsed_status.is_repository {
+                    parsed_status
+                } else {
+                    match stale_status {
+                        Some(stale_status) => stale_status,
+                        None => parsed_status,
+                    }
+                };
+
+                RefreshResult {
+                    status,
+                    cacheable: true,
+                }
+            }
             GitRunResult::Completed { success: false, .. } | GitRunResult::Failed => {
                 RefreshResult {
                     status: GitStatus::default(),
-                    cacheable: false,
+                    cacheable: true,
                 }
             }
             GitRunResult::TimedOut => RefreshResult {
@@ -199,9 +216,10 @@ where
 
     fn write_cached_status(&self, cache_name: &str, repository: &Path, status: &GitStatus) {
         let content = format!(
-            "{}\n{}\n1\n{}\n{}\n{}\n{}\n",
+            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
             self.clock.now_epoch(),
             repository_identity(repository),
+            u8::from(status.is_repository),
             status.branch.as_deref().unwrap_or_default(),
             status.staged,
             status.unstaged,
@@ -247,25 +265,34 @@ fn decode_cached_status(content: &[u8], repository: &Path) -> Option<CachedGitSt
     let mut lines = content.lines();
     let timestamp = lines.next()?.parse::<u64>().ok()?;
     let cached_repository = lines.next()?;
-    let is_repository = lines.next()? == "1";
+    let is_repository = match lines.next()? {
+        "0" => false,
+        "1" => true,
+        _ => return None,
+    };
     let branch = lines.next()?;
     let staged = lines.next()?.parse::<u32>().ok()?;
     let unstaged = lines.next()?.parse::<u32>().ok()?;
     let conflicted = lines.next()?.parse::<u32>().ok()?;
 
-    if lines.next().is_some()
-        || !is_repository
-        || branch.is_empty()
-        || cached_repository != repository_identity(repository)
-    {
+    if lines.next().is_some() || cached_repository != repository_identity(repository) {
         return None;
     }
+
+    let branch = sanitize_branch(branch);
+    let branch = if is_repository {
+        (!branch.is_empty()).then_some(branch)?
+    } else if branch.is_empty() {
+        String::new()
+    } else {
+        return None;
+    };
 
     Some(CachedGitStatus {
         timestamp,
         status: GitStatus {
             is_repository,
-            branch: Some(sanitize_branch(branch)),
+            branch: is_repository.then_some(branch),
             staged,
             unstaged,
             conflicted,
@@ -308,7 +335,10 @@ mod tests {
 
     use crate::cachedir::{CacheDir, Clock};
 
-    use super::{parse_porcelain, GitRunResult, GitRunner, GitStatus, GitStatusCollector};
+    use super::{
+        parse_porcelain, GitRunResult, GitRunner, GitStatus, GitStatusCollector,
+        LOCK_MAX_AGE_SECONDS,
+    };
 
     #[test]
     fn parses_mixed_porcelain_v2_status() {
@@ -422,6 +452,103 @@ mod tests {
 
         assert_eq!(first, second);
         assert_eq!(first.branch.as_deref(), Some("main"));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn caches_non_repository_results_within_ttl() -> Result<(), Box<dyn Error>> {
+        let home = tempdir()?;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let collector = GitStatusCollector::new(
+            ScriptedRunner {
+                calls: Arc::clone(&calls),
+                responses: Mutex::new(VecDeque::from([GitRunResult::Failed])),
+            },
+            CacheDir::from_paths(None, Some(home.path())),
+            FixedClock { now: 100 },
+        );
+
+        let first = collector.collect(Path::new("/not-a-repository"), "session", 2);
+        let second = collector.collect(Path::new("/not-a-repository"), "session", 2);
+
+        assert_eq!(first, GitStatus::default());
+        assert_eq!(second, GitStatus::default());
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn does_not_use_a_negative_cache_entry_as_stale() -> Result<(), Box<dyn Error>> {
+        let home = tempdir()?;
+        let cache_dir = CacheDir::from_paths(None, Some(home.path()));
+        assert!(cache_dir.atomic_write(
+            "git-status-session.cache",
+            b"100\n/not-a-repository\n0\n\n0\n0\n0\n",
+        ));
+        let held_lock = cache_dir.try_lock(
+            "git-status-session.cache",
+            LOCK_MAX_AGE_SECONDS,
+            &FixedClock { now: 102 },
+        );
+        assert!(held_lock.is_some());
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let collector = GitStatusCollector::new(
+            ScriptedRunner {
+                calls: Arc::clone(&calls),
+                responses: Mutex::new(VecDeque::from([successful_status("recovered")])),
+            },
+            CacheDir::from_paths(None, Some(home.path())),
+            FixedClock { now: 102 },
+        );
+
+        let status = collector.collect(Path::new("/not-a-repository"), "session", 2);
+
+        assert_eq!(status.branch.as_deref(), Some("recovered"));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        drop(held_lock);
+
+        Ok(())
+    }
+
+    #[test]
+    fn returns_stale_cache_when_successful_git_output_has_no_branch() -> Result<(), Box<dyn Error>>
+    {
+        let home = tempdir()?;
+        let now = Arc::new(AtomicU64::new(100));
+        let clock = SharedClock {
+            now: Arc::clone(&now),
+        };
+        let warm_collector = GitStatusCollector::new(
+            CountingRunner {
+                calls: Arc::new(AtomicUsize::new(0)),
+                output: "# branch.head main\n".to_owned(),
+            },
+            CacheDir::from_paths(None, Some(home.path())),
+            clock.clone(),
+        );
+        let cached_status = warm_collector.collect(Path::new("/repo"), "session", 2);
+        now.store(102, Ordering::Relaxed);
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let collector = GitStatusCollector::new(
+            ScriptedRunner {
+                calls: Arc::clone(&calls),
+                responses: Mutex::new(VecDeque::from([GitRunResult::Completed {
+                    stdout: String::new(),
+                    success: true,
+                }])),
+            },
+            CacheDir::from_paths(None, Some(home.path())),
+            SharedClock { now },
+        );
+
+        let fallback = collector.collect(Path::new("/repo"), "session", 2);
+
+        assert_eq!(fallback, cached_status);
         assert_eq!(calls.load(Ordering::Relaxed), 1);
 
         Ok(())
