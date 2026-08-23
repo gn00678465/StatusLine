@@ -1,0 +1,20 @@
+[package]
+name = "cc-statusline"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+expect_used = "deny"
+unwrap_used = "deny"
