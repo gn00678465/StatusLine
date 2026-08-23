@@ -142,7 +142,9 @@ pub struct UsageWindow {
 pub struct ExtraUsage {
     pub is_enabled: bool,
     pub utilization: u8,
+    /// Credits in dollars, normalized from the API's cents value.
     pub used_credits: f64,
+    /// Credits in dollars, normalized from the API's cents value.
     pub monthly_limit: f64,
 }
 
@@ -324,8 +326,8 @@ fn parse_extra_usage(value: Option<&Value>) -> ExtraUsage {
     ExtraUsage {
         is_enabled: matches!(value.get("is_enabled").and_then(Value::as_bool), Some(true)),
         utilization: rounded_percentage(value.get("utilization")),
-        used_credits: numeric_value(value.get("used_credits")),
-        monthly_limit: numeric_value(value.get("monthly_limit")),
+        used_credits: numeric_value(value.get("used_credits")) / 100.0,
+        monthly_limit: numeric_value(value.get("monthly_limit")) / 100.0,
     }
 }
 
@@ -815,8 +817,8 @@ mod tests {
         assert_eq!(one_weekly.seven_day.utilization, 50);
         assert!(one_weekly.extra_usage.is_enabled);
         assert_eq!(one_weekly.extra_usage.utilization, 13);
-        assert_eq!(one_weekly.extra_usage.used_credits, 1_250.0);
-        assert_eq!(one_weekly.extra_usage.monthly_limit, 10_000.0);
+        assert_eq!(one_weekly.extra_usage.used_credits, 12.50);
+        assert_eq!(one_weekly.extra_usage.monthly_limit, 100.00);
         assert_eq!(one_weekly.weekly_scoped.len(), 1);
         assert_eq!(one_weekly.weekly_scoped[0].display_name, "Fable 5");
         assert_eq!(one_weekly.weekly_scoped[0].percent, 31);
