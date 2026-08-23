@@ -368,6 +368,9 @@ fn civil_to_days(year: i64, month: u32, day: u32) -> Option<i64> {
 }
 
 #[cfg(unix)]
+// musl 1.2 temporarily deprecates libc::time_t during its 64-bit time_t
+// transition (libc #1848); localtime_r and gmtime_r still require this ABI type.
+#[allow(deprecated)]
 fn system_local_offset_unix(epoch_seconds: i64) -> i32 {
     use std::mem::MaybeUninit;
 
