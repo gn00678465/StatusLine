@@ -1,6 +1,6 @@
 # 13 — 文件與切換收尾
 
-Status: review
+Status: done
 Type: task
 Blocked by: 12
 
