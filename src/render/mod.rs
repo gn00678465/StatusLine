@@ -2,6 +2,7 @@
 
 pub mod blocks;
 pub mod color;
+pub mod limits;
 pub mod meter;
 
 use crate::gitstatus::GitStatus;
