@@ -39,6 +39,30 @@ versions before 12 silently ignore these two newer flags. See the
 [npm 12 allow-scripts research §1](docs/research/npm-allow-scripts.md#1-摘要結論與建議)
 for the tested behavior and rationale.
 
+Other package managers gate install scripts too, each with its own allow
+syntax. Beware pnpm 11: without the flag it skips the postinstall **silently**
+(exit 0, no warning, no binary). Tested commands:
+
+```sh
+# pnpm 11.x (the allow-build key must embed the full URL)
+pnpm add -g \
+  --allow-build='@gn00678465/cc-statusline@https://github.com/gn00678465/StatusLine/releases/latest/download/cc-statusline-npm.tgz' \
+  https://github.com/gn00678465/StatusLine/releases/latest/download/cc-statusline-npm.tgz
+
+# pnpm 10.x (package-name form; incompatible with the pnpm 11 syntax above)
+pnpm add -g --allow-build=@gn00678465/cc-statusline \
+  https://github.com/gn00678465/StatusLine/releases/latest/download/cc-statusline-npm.tgz
+
+# bun
+bun add -g --trust https://github.com/gn00678465/StatusLine/releases/latest/download/cc-statusline-npm.tgz
+
+# yarn classic (no gate, no flag needed)
+yarn global add https://github.com/gn00678465/StatusLine/releases/latest/download/cc-statusline-npm.tgz
+```
+
+Details and per-tool test evidence:
+[research §6](docs/research/npm-allow-scripts.md#6-其他套件管理器pnpm--bun--yarn).
+
 ### Manual download
 
 Choose the asset for the host, download its checksum sidecar, and verify before
