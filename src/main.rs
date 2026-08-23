@@ -6,7 +6,7 @@ pub mod cachedir;
 mod config;
 pub mod gitstatus;
 mod input;
-mod oauth;
+pub mod oauth;
 pub mod render;
 pub mod ttl;
 mod update;

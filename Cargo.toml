@@ -7,7 +7,9 @@ edition = "2021"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 unicode-width = "0.2"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
 insta = "1"
