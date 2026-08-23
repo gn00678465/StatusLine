@@ -7,6 +7,23 @@
 
 ## [Unreleased]
 
+## [v2.0.1] - 2026-08-23
+
+### Documentation
+
+- 將 `install.sh` 提升為 README 首選安裝方式，並補充 npm 12 的
+  `allow-remote=none` / install-script 預設封鎖行為。
+- npm tarball 指令改用完整 `releases/latest/download` URL 搭配
+  `--allow-remote=all` 與 `--allow-scripts`；說明 npm 對 tarball 的套件名建議
+  無法匹配，舊版 npm 則會靜默忽略旗標。
+
+### Fixed
+
+- postinstall 被 `--ignore-scripts` 或 npm script policy 跳過/封鎖時，診斷改提供
+  完整雙旗標 npm 指令與 `install.sh` 替代方案。
+- Cargo、npm installer 與 POSIX installer 版本同步至 `2.0.1`，避免 binary
+  更新檢查與安裝器發佈版本不一致。
+
 ## [v2.0.0] - 2026-08-23
 
 ### Changed
@@ -118,7 +135,8 @@
 - 初始 status line 實作：workspace、Git、model、effort、context、5h/7d/extra
   rate limits、折行與更新檢查。
 
-[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v2.0.1...HEAD
+[v2.0.1]: https://github.com/gn00678465/StatusLine/compare/v2.0.0...v2.0.1
 [v2.0.0]: https://github.com/gn00678465/StatusLine/compare/v1.2.2...v2.0.0
 [v1.2.2]: https://github.com/gn00678465/StatusLine/compare/v1.2.1...v1.2.2
 [v1.2.1]: https://github.com/gn00678465/StatusLine/compare/v1.2.0...v1.2.1
