@@ -19,7 +19,9 @@ Single-context repo:
 ├── docs/adr/
 │   ├── 0001-example-decision.md
 │   └── 0002-another-decision.md
-└── claudeStatusLine.sh
+├── src/            # cc-statusline Rust modules
+├── npm/            # npm installer package
+└── install.sh
 ```
 
 ## Use the glossary's vocabulary
