@@ -1,6 +1,6 @@
 # 06 — 渲染引擎:基礎區塊
 
-Status: review
+Status: done
 Type: task
 Blocked by: 02, 04, 05
 
@@ -27,3 +27,5 @@ Blocked by: 02, 04, 05
 - TDD 證據：色盤、meter、`format_tokens`、effort/context 與第一個 renderer snapshot 均先 RED（缺少目標 interface/依賴）再逐切片 GREEN；snapshot macro 的 inline 呼叫型別與命名形式經編譯錯誤校正，無行為偏離。
 - 本機驗證成功：`cargo fmt --check`、`cargo test --all-targets`（41 unit + 2 integration 全過）、`cargo clippy --all-targets -- -D warnings`、`cargo build --release`。
 - 偏離：無。
+- 驗證(orchestrator, 2026-08-23):色盤 12 常數 byte-exact;meter 雙階梯(bar 70=橘/dots 70=黃)與 shell 刻意互換一致;format_tokens 進位含 frac carry 邊界全對;effort 五級 + med 縮寫 + 缺失隱藏;context 區塊 ANSI 序列組合順序逐字元對等;官方 used_percentage 優先、自算 fallback floor 對等。獨立重跑 41+2 全綠。→ done
+- 小記:mod.rs 的折行判斷與 width::wrap_status_line 有輕微重複,ticket 11 整合時考慮收攏,不影響行為。

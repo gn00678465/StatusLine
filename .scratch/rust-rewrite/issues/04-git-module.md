@@ -1,6 +1,6 @@
 # 04 — Git 狀態模組
 
-Status: review
+Status: done
 Type: task
 Blocked by: 03
 
@@ -29,3 +29,5 @@ Blocked by: 03
 - 補齊測試：non-repo 在 TTL 內只呼叫 runner 一次；過期 `ok=0` 項目在 refresh lock 被持有時仍不會當 stale；成功但空 branch 時會回傳正面 stale。TDD 證據：non-repo cache 測試先 RED（runner calls `2`，預期 `1`），再實作 cache schema 與 fresh-hit 語意至 GREEN。
 - 本次本機驗證成功：`cargo fmt --check`、`cargo test --all-targets`（27 unit + 2 integration 全過）、`cargo clippy --all-targets -- -D warnings`、`cargo build --release`。
 - 僅記錄、不改碼：timeout 後的 Git 子程序目前不主動終止，read-only 操作無害；空 session id 仍以 `default` 作 key，ticket 11 主組裝將以 cwd 提供 fallback key。
+- 驗證(orchestrator, 2026-08-23):解析/timeout/快取初審通過;退回「負面結果不快取」分歧(非 repo 目錄在 1Hz 下每秒 spawn git),已修於 32739a7:Failed 與空 branch 皆寫 ok=0 條目節流、stale fallback 僅限 ok=1、空 branch 回 stale、TimedOut 不寫,decode 對 ok=0 僅接受空 branch。獨立重跑 27+2 全綠。→ done
+- 記錄不改:timeout 後 git 子行程不 kill(read-only 無害);空 session_id 的 cwd fallback key 由 ticket 11 主組裝處理。

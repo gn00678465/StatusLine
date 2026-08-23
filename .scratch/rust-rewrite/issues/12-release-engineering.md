@@ -1,6 +1,6 @@
 # 12 — 發佈工程:npm 套件、install.sh、release CI
 
-Status: review
+Status: done
 Type: task
 Blocked by: 11
 
@@ -25,3 +25,4 @@ Blocked by: 11
 - 驗證指令：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all-targets`（75 passed）、`npm test`、`sh tests/test-install.sh`、`shellcheck install.sh tests/test-install.sh`、`actionlint .github/workflows/ci.yml .github/workflows/release.yml`、`npm pack --ignore-scripts --pack-destination <tmp> ./npm` 全數通過。另以 `cargo build --release` 實際封裝 Darwin arm64 tarball，內容為單一 `cc-statusline`，sidecar 格式為 `<hash>  <filename>`。
 - 待遠端驗證：尚未推送 workflow，故未啟動 GitHub `workflow_dispatch` 六目標 dry-run；workflow 已設定手動觸發只 build/package/upload artifacts、不建立 Release。
 - 偏離／規格衝突：§7.1 列出的 6 archives + 6 sidecars + npm tgz 為 13 個，但 ticket 同時要求把 `install.sh` 也上傳。workflow 依較具體的 install.sh 要求產出 14 個 assets，並在 release job 明確驗證數量。
+- 驗證(orchestrator, 2026-08-23):installer 測試(HTTP/file mock、竄改拒絕、ignore-scripts 診斷)親跑通過;dry-run 第一輪抓到 musl libc::time_t deprecation(deny warnings 下編譯失敗),修於 6b7d443 後第二輪 dry-run 全綠(run 32619155016):六 target + npm tgz + install.sh 共 8 artifacts 命名符合 spec,Create Release 於 dry-run 正確 skipped。14 assets 偏離(install.sh 上傳)核准,ticket 13 同步 spec §7.1 文字。→ done

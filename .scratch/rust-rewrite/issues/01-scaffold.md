@@ -1,6 +1,6 @@
 # 01 — 專案骨架與 CI 基礎
 
-Status: review
+Status: done
 Type: task
 
 ## 範圍
@@ -15,7 +15,7 @@ Type: task
 
 - [x] `echo '{}' | cargo run` 輸出 `Claude`,exit 0
 - [x] 空 stdin 同樣輸出 `Claude`
-- [ ] CI 三 OS 全綠（待 GitHub Actions 執行）
+- [x] CI 三 OS 全綠
 
 ## Comments
 
@@ -24,3 +24,4 @@ Type: task
 - 本機驗證皆成功：`cargo fmt --check`、`cargo test --all-targets`（2 passed）、`cargo clippy --all-targets -- -D warnings`、`cargo build --release`、`echo '{}' | cargo run`（輸出 `Claude`，exit 0）、`cargo run < /dev/null`（輸出 `Claude`，exit 0）。
 - 已新增 GitHub Actions 三 OS（macOS/Linux/Windows）test matrix 與 fmt/clippy job；尚未推送 branch，因此 CI 綠燈留待遠端驗證。
 - 偏離：無。
+- 驗證(orchestrator, 2026-08-23):本地驗收指令獨立重跑全過;release profile / lints / 模組樹逐項比對 spec §5–6 相符;無越界實作。branch 已推 origin,CI run 三 OS + fmt/clippy 全綠(`gh run watch --exit-status` exit 0)。附註:checkout@v4 有 Node 20 淘汰警告,後續 ticket 順手升 v5 即可。→ done

@@ -1,6 +1,6 @@
 # 03 — 快取基礎層
 
-Status: review
+Status: done
 Type: task
 Blocked by: 01
 
@@ -27,3 +27,6 @@ Blocked by: 01
 - 本機驗證成功：`cargo fmt --check`、`cargo test --all-targets`（17 unit + 2 integration 全過）、`cargo clippy --all-targets -- -D warnings`、`cargo build --release`。
 - 依賴：runtime `libc` 僅用於 Unix `geteuid()`，以實作 spec 要求的目前使用者 owner 驗證；`tempfile` 為 dev-dependency，僅用於隔離檔案系統測試。
 - 偏離：無。
+- 驗證(orchestrator, 2026-08-23):`is_safe_directory` 與 shell `_dir_is_safe` 逐項對等(euid、`mode & 0o022`、symlink、fail-closed、逐層含 weak leaf);entry name 單一 component 防 traversal、read 拒 symlink、`sync_all` 落盤、Windows rename 可覆蓋。fmt/clippy/test 獨立重跑全綠(17+2)。`libc`(geteuid)依賴核准。→ done
+- 後續硬化(隨 ticket 04 一併做):目錄建立改用 `DirBuilderExt::mode(0o700)` 於建立當下賦權,消除 create→chmod 之間的短暫預設權限窗口(對等 shell 版 umask 077 的「自始私有」語意);`ensure_safe_child_directory` 與 `try_lock` 兩處。
+- 流程註記(第二次):08ff861 仍掃入非本 ticket 的 docs/agents 修改。

@@ -1,6 +1,6 @@
 # 10 — 更新檢查
 
-Status: review
+Status: done
 Type: task
 Blocked by: 03, 08
 
@@ -26,3 +26,4 @@ Blocked by: 03, 08
 - TDD 證據：先以不存在的 `is_newer_version` 建立版本比較 RED；再以缺少 `UpdateChecker`／`HttpClient::get_url` 的快取測試 RED，完成最小 checker 與 HTTP seam 後轉 GREEN。
 - 驗證通過：`cargo fmt --check`；`cargo test --all-targets`（68 unit + 2 integration）；`cargo clippy --all-targets -- -D warnings`；`cargo build --release`。
 - 偏離：無。
+- 驗證(orchestrator, 2026-08-23):24h mtime 快取、非空回應(含錯誤 JSON)一律寫入、空回應不寫、鎖占用回 stale、tag 白名單、semver v剝除/缺位補0/前三段、非數字組件保守 false——逐條與 shell 901-946 對等;附加行 \n+dim 格式一致。獨立重跑 68+2 全綠。→ done

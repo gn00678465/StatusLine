@@ -1,6 +1,6 @@
 # 07 — Cache 命中率與 TTL 狀態機
 
-Status: review
+Status: done
 Type: task
 Blocked by: 03, 06
 
@@ -26,3 +26,4 @@ Blocked by: 03, 06
 - TDD 證據：先以 `CacheTtl` 的首次建檔狀態測試建立 RED，再實作狀態機；另先讓 renderer snapshot 使用尚未存在的 `cache_status` 欄位，確認編譯 RED 後才完成組裝。測試涵蓋 signature 不變/變更、無 usage 取 last rate（含僅有 last rate 的舊狀態）、空狀態不寫檔、邊界與奇偶閃爍，以及完整 cache block inline snapshots。
 - 本機驗證成功：`cargo fmt --check`（exit 0）；`cargo test --all-targets`（47 unit + 2 integration 全過）；`cargo clippy --all-targets -- -D warnings`（exit 0）；`cargo build --release`（exit 0）。
 - 偏離：無。
+- 驗證(orchestrator, 2026-08-23):hit rate 公式、signature 轉移(含 started_at 缺失重建)、TTL 邊界 <=300/1200/2400、now%2 偶紅奇亮紅、elapsed>=3600→exp、{}:{:02} 時間格式皆與 shell 逐條對等;decode 對殘缺狀態較 shell 寬容(僅 last_hit_rate 亦可用),輸出經 u8 解析安全,核准。獨立重跑 47+2 全綠。→ done

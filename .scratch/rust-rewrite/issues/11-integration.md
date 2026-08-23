@@ -1,6 +1,6 @@
 # 11 — 整合組裝與對等驗證
 
-Status: review
+Status: done
 Type: task
 Blocked by: 07, 09, 10
 
@@ -26,3 +26,4 @@ Blocked by: 07, 09, 10
 - `cargo llvm-cov --all-targets --fail-under-lines 80`：90.74% lines（75 passed），CI 已加入相同 80% 門檻。
 - `hyperfine --warmup 2 --runs 10`（release、版本快取固定以隔離網路）：`{}` 12.3 ms ± 0.3 ms；完整 fixture 冷快取 25.1 ms ± 0.6 ms；完整 fixture 暖快取 12.5 ms ± 0.1 ms。
 - 偏離：無；benchmark 的冷快取每輪僅清除暫存目錄內明確的 Git/TTL cache 項目。
+- 驗證(orchestrator, 2026-08-23):parity harness 親跑 10 fixtures 全過,白名單(parity-whitelist.md)正規化邊界審核通過;main.rs 組裝與軟降級、session fallback、折行收攏確認;插單修正 Windows set_times 可寫 handle(4969141);完整 CI 六 job 全綠(run 32618145740,含 Coverage 80% 門檻與 Shell parity)。效能覆核:implementor 的 12.3ms 為隔離環境 keychain 子行程成本;orchestrator 於暖快取真實情境實測 2.3ms(vs /bin/echo 0.73ms),符合 ~2ms 目標;README 正式數字於 ticket 13 以雙情境方法學記載。→ done

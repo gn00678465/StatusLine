@@ -1,6 +1,6 @@
 # 09 — Rate limits 渲染
 
-Status: review
+Status: done
 Type: task
 Blocked by: 06, 08
 
@@ -26,3 +26,4 @@ limits 區塊(spec §4.1-5):
 - 新增 snapshot／單元測試，涵蓋內建、OAuth、多 weekly、extra、僅 7d fixture、0% 與缺失區分、clamp、UTC／固定 offset、月名及跨年。
 - 驗證通過：`cargo fmt --check`；`cargo test --all-targets`（63 unit + 2 integration）；`cargo clippy --all-targets -- -D warnings`；`cargo build --release`。
 - 偏離：無。
+- 驗證(orchestrator, 2026-08-23):內建優先/0%與缺失區分/📊 一次性/皆無 placeholder/weekly+extra 獨立 append 與 shell 751-829 對等;時間格式 %H:%M 補零、%b %-d 日不補零、ISO 清洗(小數秒/+00:00)與 epoch 雙路徑、offset 注入 DST-correct;內建 pct 截斷(%%.*)與 OAuth round 語意各自對等;extra 顏色走 bar 階梯。獨立重跑 63+2 全綠。→ done

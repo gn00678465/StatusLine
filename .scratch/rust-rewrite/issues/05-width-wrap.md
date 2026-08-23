@@ -1,6 +1,6 @@
 # 05 — 顯示寬度與折行
 
-Status: review
+Status: done
 Type: task
 Blocked by: 01
 
@@ -25,3 +25,4 @@ Blocked by: 01
 - TDD 證據：ANSI strip、UI glyph width 與折行 API 均先 RED（缺少 public function）再以最小實作 GREEN；`COLUMNS` fallback 是既有 config 行為，補上缺失值的精確回歸斷言。
 - 本機驗證成功：`cargo fmt --check`、`cargo test --all-targets`（32 unit + 2 integration 全過）、`cargo clippy --all-targets -- -D warnings`、`cargo build --release`。
 - 偏離：無。
+- 驗證(orchestrator, 2026-08-23):zero-width 五區間與 shell jq 表逐一相符;wide 以 26A1+1F300–1FAFF override 補足,其餘經 unicode-width 覆蓋(Hangul/CJK/fullwidth 抽查一致);CSI 剝除、折行邊界(21/20 欄)、CJK 混排測試皆過。獨立重跑 32+2 全綠。→ done
