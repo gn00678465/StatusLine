@@ -31,6 +31,12 @@ pub trait CredentialStore {
 
 pub trait HttpClient {
     fn get_usage(&self, token: &str) -> Option<String>;
+
+    fn get_url(&self, url: &str) -> Option<String> {
+        let _unused_url = url;
+
+        None
+    }
 }
 
 pub struct SystemCredentialStore;
@@ -104,6 +110,22 @@ impl HttpClient for UreqHttpClient {
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .header("anthropic-beta", "oauth-2025-04-20")
+            .header("User-Agent", "claude-code/2.1.34")
+            .call()
+            .ok()?;
+
+        response.body_mut().read_to_string().ok()
+    }
+
+    fn get_url(&self, url: &str) -> Option<String> {
+        let agent = ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(3)))
+            .timeout_global(Some(Duration::from_secs(5)))
+            .build()
+            .new_agent();
+        let mut response = agent
+            .get(url)
+            .header("Accept", "application/vnd.github+json")
             .header("User-Agent", "claude-code/2.1.34")
             .call()
             .ok()?;

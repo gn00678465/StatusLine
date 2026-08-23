@@ -9,7 +9,7 @@ mod input;
 pub mod oauth;
 pub mod render;
 pub mod ttl;
-mod update;
+pub mod update;
 pub mod width;
 
 use std::io::Read;
