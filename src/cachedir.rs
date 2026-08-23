@@ -79,10 +79,10 @@ impl CacheDir {
 
         remove_stale_lock(&lock_path, max_age_seconds, clock);
 
-        if fs::create_dir(&lock_path).is_err() {
+        if create_private_directory(&lock_path).is_err() {
             return None;
         }
-        if set_owner_only_permissions(&lock_path).is_err() || !is_safe_directory(&lock_path) {
+        if !is_safe_directory(&lock_path) {
             let _remove_result = fs::remove_dir(&lock_path);
             return None;
         }
@@ -207,13 +207,8 @@ fn ensure_safe_child_directory(parent: &Path, name: &str) -> Option<PathBuf> {
     match fs::symlink_metadata(&child) {
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            match fs::create_dir(&child) {
-                Ok(()) => {
-                    if set_owner_only_permissions(&child).is_err() {
-                        let _remove_result = fs::remove_dir(&child);
-                        return None;
-                    }
-                }
+            match create_private_directory(&child) {
+                Ok(()) => {}
                 Err(create_error) if create_error.kind() == std::io::ErrorKind::AlreadyExists => {}
                 Err(_) => return None,
             }
@@ -222,6 +217,22 @@ fn ensure_safe_child_directory(parent: &Path, name: &str) -> Option<PathBuf> {
     }
 
     is_safe_directory(&child).then_some(child)
+}
+
+fn create_private_directory(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        builder.create(path)
+    }
+
+    #[cfg(windows)]
+    {
+        fs::create_dir(path)
+    }
 }
 
 fn remove_stale_lock<C: Clock>(lock_path: &Path, max_age_seconds: u64, clock: &C) {
@@ -285,18 +296,6 @@ fn platform_directory_is_safe(_: &fs::Metadata) -> bool {
 }
 
 #[cfg(unix)]
-fn set_owner_only_permissions(path: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-}
-
-#[cfg(windows)]
-fn set_owner_only_permissions(_: &Path) -> std::io::Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
 fn current_user_id() -> u32 {
     // SAFETY: `geteuid` has no preconditions and does not access Rust-managed memory.
     unsafe { libc::geteuid() }
@@ -318,12 +317,24 @@ mod tests {
     fn creates_a_safe_home_cache_chain() -> Result<(), Box<dyn Error>> {
         let home = tempdir()?;
         let cache_dir = CacheDir::from_paths(None, Some(home.path()));
+        let expected_cache_dir = home.path().join(".cache").join("StatusLine");
 
         assert!(cache_dir.is_safe());
-        assert_eq!(
-            cache_dir.path(),
-            Some(home.path().join(".cache").join("StatusLine").as_path())
-        );
+        assert_eq!(cache_dir.path(), Some(expected_cache_dir.as_path()));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+
+            assert_eq!(
+                std::fs::metadata(home.path().join(".cache"))?.mode() & 0o777,
+                0o700
+            );
+            assert_eq!(
+                std::fs::metadata(&expected_cache_dir)?.mode() & 0o777,
+                0o700
+            );
+        }
 
         Ok(())
     }
