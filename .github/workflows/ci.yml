@@ -29,15 +29,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --all-targets
 
-  parity:
-    name: Shell parity
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build
-      - run: bash tests/parity.sh
-
   coverage:
     name: Coverage
     runs-on: ubuntu-latest

@@ -2,7 +2,7 @@
 
 set -eu
 
-VERSION="2.0.0-rc"
+VERSION="2.0.0"
 REPOSITORY_URL="https://github.com/gn00678465/StatusLine"
 
 manual_install_hint() {
