@@ -178,3 +178,7 @@ sh tests/test-install.sh
 The Rust tests read the checked-in `tests/fixtures/*.json` files. Network,
 credential, Git, clock, and local-time seams are injected in tests, so the
 commands above do not require a Claude session or OAuth credentials.
+
+## License
+
+cc-statusline is released under the [MIT License](LICENSE).
