@@ -4,7 +4,7 @@
 
 pub mod cachedir;
 mod config;
-mod gitstatus;
+pub mod gitstatus;
 mod input;
 mod oauth;
 mod render;
