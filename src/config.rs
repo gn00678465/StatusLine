@@ -62,10 +62,9 @@ fn parse_usage_style(value: Option<&str>) -> UsageStyle {
 }
 
 fn parse_git_cache_ttl(value: Option<&str>) -> u64 {
-    match value.and_then(|value| value.parse::<i64>().ok()) {
-        Some(seconds) => seconds.clamp(0, 60) as u64,
-        None => DEFAULT_GIT_CACHE_TTL_SECONDS,
-    }
+    value
+        .and_then(|value| value.parse::<u64>().ok())
+        .map_or(DEFAULT_GIT_CACHE_TTL_SECONDS, |seconds| seconds.min(60))
 }
 
 fn parse_columns(value: Option<&str>) -> usize {
@@ -93,9 +92,9 @@ mod tests {
         assert_eq!(fallback.git_cache_ttl_seconds(), 2);
         assert_eq!(fallback.columns(), 100);
 
-        let lower_bound = Config::from_values(None, Some("-1"), Some("not-a-number"));
+        let negative_ttl = Config::from_values(None, Some("-1"), Some("not-a-number"));
 
-        assert_eq!(lower_bound.git_cache_ttl_seconds(), 0);
-        assert_eq!(lower_bound.columns(), 100);
+        assert_eq!(negative_ttl.git_cache_ttl_seconds(), 2);
+        assert_eq!(negative_ttl.columns(), 100);
     }
 }
