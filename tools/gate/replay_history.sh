@@ -18,7 +18,7 @@ repo_root=$(git rev-parse --show-toplevel)
 artifact_dir="$repo_root/.gate/$scope"
 mkdir -p "$artifact_dir/replay"
 wt="$repo_root/../$(basename "$repo_root")-replay"
-export CARGO_TARGET_DIR="$repo_root/$artifact_dir/replay-target"
+export CARGO_TARGET_DIR="$artifact_dir/replay-target"
 
 merge_base=$(git merge-base "$base" HEAD)
 git worktree remove --force "$wt" 2>/dev/null || true

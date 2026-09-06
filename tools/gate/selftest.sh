@@ -10,6 +10,9 @@ base=$2
 tmp="$artifact_dir/selftest"
 rm -rf "$tmp"
 mkdir -p "$tmp"
+# The source-state controls plant throwaway files in the tree; remove them on
+# any exit so an aborted self-test cannot leave the tree dirty.
+trap 'rm -rf zz_selftest_wl src/zz_selftest_stray.rs' EXIT
 
 expect_rc() {
   want=$1; label=$2; shift 2
