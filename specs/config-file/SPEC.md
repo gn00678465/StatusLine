@@ -1,6 +1,6 @@
 # SPEC — 使用者設定檔 `~/.config/cc-statusline/config.toml` (Tier 2)
 
-- `spec_version`: v2
+- `spec_version`: v3
 - `status`: approved
 - `tier`: 2
 - `scope`: `config-file`
@@ -28,6 +28,7 @@ cc-statusline 目前只從環境變數讀取設定（`src/config.rs`）。使用
 | 未知鍵 | 忽略（不用 `deny_unknown_fields`） | 研究 §7.1：chezmoi 跨機器同步時版本可能不一致 |
 | 寫入 | 本 binary 永不建立或寫入設定檔與其目錄 | 讀取路徑不涉及安全目錄檢查 |
 | 建立者 | 設定檔由使用者自行建立（手動或經 chezmoi）。binary 不自動建立範本，也不提供 `--init-config`；README 提供可直接複製的範例 | 審閱 Q7 採 A：render 路徑每秒執行且必須 exit 0，寫家目錄會增加失敗模式並與 chezmoi 的檔案擁有權衝突；starship 同樣不自動建立 |
+| 資源上限 | 設定檔最多讀取 16384 bytes（16 KiB）；超過即視為「無法讀取」：整份忽略＋stderr diagnostic（訊息含路徑與上限）。TOML 解析在專用 thread 上執行，stack 固定 16 MiB，使 16 KiB 內任何巢狀深度都不可能溢位 | 審查 F1（codex-astra）：實測 `basic-toml` 在 1 MiB 主執行緒 stack 於巢狀深度 2500（約 5 KB 檔案）溢位並中止程序、stdout 為空，違反 Must NOT 第 3 條；16 MiB thread 實測深度 32768（64 KB）仍可解析，16 KiB 上限保留約 5 倍餘裕 |
 
 設定檔範例（將寫入 README）：
 
@@ -63,6 +64,12 @@ git_cache_ttl = 2      # 0–60 秒，Git 狀態快取
 14. `renders_status_line_and_warns_on_malformed_config_file`：同上隔離，但檔案內容 `usage_style = 1` → exit 0；stdout 含 `Fable 5` 與 `▓`／`░`（bar 預設）；stderr 含 `config.toml`。
 15. `env_overrides_config_file_in_real_binary`：檔案 `dots`，env `STATUSLINE_USAGE_STYLE=bar` → stdout 含 `▓`／`░`、不含 `●`。
 
+v3 新增（資源上限）：
+
+16. `oversized_config_file_yields_defaults_with_diagnostic`（單元）：16385 bytes 的檔案（`usage_style = "dots"` 後以註解填滿）→ 全預設、diagnostic `Some` 且含路徑；16384 bytes 的同構檔案 → `Dots`、diagnostic `None`。
+17. `deeply_nested_config_file_does_not_crash`（整合，真實 binary）：檔案內容 `x = ` 後接 4000 層 `[`／`]`（約 8 KB，合法 TOML、未知鍵）→ exit 0；stdout 含 `Fable 5` 與 `▓`／`░`；stderr 為空。
+18. `renders_with_defaults_when_no_home_directory_exists`（整合，真實 binary；S11「兩者皆無」的真實執行對應）：移除 `HOME`／`USERPROFILE`／`XDG_CONFIG_HOME` → exit 0；stdout 含 `Fable 5` 與 `▓`／`░`；stderr 為空。
+
 ## Must NOT
 
 - Must NOT 改變「沒有設定檔且環境變數不變」時的任何輸出：現有 72 個測試（含 `src/main.rs` 的 inline snapshot）一字不改地通過。
@@ -95,10 +102,13 @@ git_cache_ttl = 2      # 0–60 秒，Git 狀態快取
 Append-only。每個核准版本一筆：逐字引用核准語句、日期、綁定的 `spec_version`。
 
 - 2026-09-06 — approves v2 — 「核准 spec v2」（使用者於終端輸入；審閱頁留言串 `cmt_mtpsl4iv` 已於同日解決，Q1–Q7 裁定見 Revisions）
+- 2026-09-06 — approves v3 — 「核准 spec v3」（使用者於終端輸入；v3 內容：資源上限決定、Scenario 16–18）
 
 ## Revisions
 
 Append-only。
+
+- 2026-09-06 — v3（revised-pending-approval）：獨立 code review（codex-astra）finding F1 指出設定檔無大小與巢狀深度上限；實測重現 `basic-toml` 於 1 MiB 主執行緒在深度 2500 溢位中止、stdout 為空（違反 Must NOT 第 3 條）。新增設計決定「資源上限」（16 KiB 讀取上限＋16 MiB 專用解析 thread）與 Scenario 16、17；gate 的 changed-line coverage 指出 `Config::load` 的「無家目錄」分支未被真實執行覆蓋，補 Scenario 18（S11 的真實 binary 對應，不新增行為）。其餘 review finding（F2 整合測試 PATH 隔離、F3／F4 S6／S7 測試未經 TOML 解析、F5 README 措辭）為既有 spec 條文的遵循性修正，不改版。v2 的核准不涵蓋本版；待重新核准。
 
 - 2026-09-06 — v2：審閱頁探索第 1 輪（留言串 `cmt_mtpsl4iv`）。使用者裁定：Q1 路徑採 A（`~/.config/cc-statusline/config.toml`，尊重 `XDG_CONFIG_HOME`）、Q2 採 A（TOML + `basic-toml`）、Q3 採 A（格式錯誤 stderr 一行、套預設、exit 0）、Q4 採 A（env 勝出後值無效即套預設）、Q5 採 A（不動版號）、Q6 採 A（Tier 2）；新增 Q7「設定檔由誰建立」，使用者裁定採 A（使用者自行建立，binary 永不寫入）。決定表新增「建立者」列。v1 尚未核准，本版取代 v1 待核准。
 - 2026-09-06 — v1 草稿：依 `docs/research/user-config-file-conventions.md` 定案路徑、格式、優先序與容錯策略；以 `cargo tree` 實測 `basic-toml`（淨增 1 crate）與 `toml` 最小 feature（淨增 5 crate）後選 `basic-toml`。
