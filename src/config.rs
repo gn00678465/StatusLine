@@ -314,6 +314,21 @@ mod tests {
         );
         assert_eq!(diagnostic, None);
 
+        // 16384 bytes of '#' plus a multi-byte char ("中", 3 bytes) = 16387
+        // bytes, split across the byte cap mid-codepoint. The size check
+        // must fire before UTF-8 decoding, so the diagnostic still names
+        // the byte limit rather than reporting a decode error.
+        let boundary_multibyte = format!("{}中", "#".repeat(LIMIT));
+        std::fs::write(&path, &boundary_multibyte)?;
+        let (_file, diagnostic) = read_config_file(&path);
+        let diagnostic = diagnostic.ok_or(
+            "expected a diagnostic for a multi-byte-boundary file over the 16384-byte limit",
+        )?;
+        assert!(
+            diagnostic.contains("16384"),
+            "diagnostic {diagnostic:?} should mention the 16384-byte limit, not a UTF-8 decode error"
+        );
+
         Ok(())
     }
 
