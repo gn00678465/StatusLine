@@ -146,7 +146,9 @@ of the wrong type (`usage_style = 1`, `git_cache_ttl = "2"`,
 default, and one line is printed to stderr
 (`cc-statusline: ignoring config file <path>: <error>`). stdout and the exit
 code are never affected. Unknown keys in the file are ignored, so an older
-binary can read a config file written by a newer one.
+binary can read a config file written by a newer one. The file is capped at
+16 KiB; a larger file is treated the same as a malformed one — ignored in
+full, with a stderr diagnostic naming the path and the limit.
 
 OAuth credentials are tried in this order: environment token, macOS Keychain,
 `.credentials.json`, and (on Linux) `secret-tool`. A missing credential,
