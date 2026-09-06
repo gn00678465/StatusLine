@@ -370,10 +370,17 @@ mod tests {
     }
 
     #[test]
-    fn file_cannot_set_columns() {
-        let config = Config::resolve(EnvValues::default(), FileConfig::default());
+    fn file_cannot_set_columns() -> Result<(), Box<dyn Error>> {
+        let dir = tempdir()?;
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "columns = 50\n")?;
+
+        let (file, _diagnostic) = read_config_file(&path);
+        let config = Config::resolve(EnvValues::default(), file);
 
         assert_eq!(config.columns(), 100);
+
+        Ok(())
     }
 
     #[test]
