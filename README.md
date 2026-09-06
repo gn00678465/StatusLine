@@ -1,6 +1,6 @@
 # cc-statusline
 
-Version **2.0.1** is a single Rust binary for the Claude Code status line. It
+Version **2.1.0** is a single Rust binary for the Claude Code status line. It
 keeps the v1 layout while removing the runtime dependency on shell, `jq`, and
 network command-line tools. A redraw is safe to run at 1 Hz: cached work stays
 local, and network/keychain refreshes are bounded and fail closed.

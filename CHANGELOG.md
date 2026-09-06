@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [v2.1.0] - 2026-09-06
+
 ### Added
 
 - 新增使用者設定檔 `~/.config/cc-statusline/config.toml`（尊重
@@ -17,6 +19,14 @@
   不受影響。檔案上限 16 KiB，超過即視為無法讀取（整份忽略＋stderr 提示）；
   TOML 解析在專用的 16 MiB stack thread 上執行，避免深度巢狀內容造成 stack
   overflow。
+
+### Notes
+
+- 無 breaking change：環境變數行為與沒有設定檔時的輸出完全不變，直接更新
+  binary 即可。
+- chezmoi 使用者可在 source 加入 `dot_config/cc-statusline/config.toml`（例如
+  `usage_style = "dots"`），設定不再受 `~/.claude/settings.json` 重新套用影響。
+- Cargo、npm installer 與 POSIX installer 版本同步至 `2.1.0`。（#10）
 
 ## [v2.0.1] - 2026-08-23
 
@@ -146,7 +156,8 @@
 - 初始 status line 實作：workspace、Git、model、effort、context、5h/7d/extra
   rate limits、折行與更新檢查。
 
-[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v2.1.0...HEAD
+[v2.1.0]: https://github.com/gn00678465/StatusLine/compare/v2.0.1...v2.1.0
 [v2.0.1]: https://github.com/gn00678465/StatusLine/compare/v2.0.0...v2.0.1
 [v2.0.0]: https://github.com/gn00678465/StatusLine/compare/v1.2.2...v2.0.0
 [v1.2.2]: https://github.com/gn00678465/StatusLine/compare/v1.2.1...v1.2.2
