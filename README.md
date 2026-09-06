@@ -120,6 +120,28 @@ same ten positions and color thresholds across context and limits.
 | `CLAUDE_CODE_OAUTH_TOKEN` | token | Highest-priority OAuth token source |
 | `COLUMNS` | positive integer | Terminal width; invalid or missing values use `100` |
 
+### Config file
+
+`~/.config/cc-statusline/config.toml` (or `$XDG_CONFIG_HOME/cc-statusline/config.toml`
+when that variable is set and non-empty) is an optional, user-created file —
+cc-statusline never creates, writes, or requires it. Per key, a non-empty
+environment variable wins over the file, which wins over the built-in
+default:
+
+```toml
+# ~/.config/cc-statusline/config.toml
+usage_style = "dots"   # "bar" (default) or "dots"
+git_cache_ttl = 2      # 0-60 seconds, Git status cache
+```
+
+`COLUMNS` cannot be set from the file — it is a terminal property, not a
+preference. A missing file is silent. An unreadable or malformed file (bad
+TOML syntax, wrong value type, or an out-of-range integer) is ignored in full:
+every key falls back to its default, and one line is printed to stderr
+(`cc-statusline: ignoring config file <path>: <error>`). stdout and the exit
+code are never affected. Unknown keys in the file are ignored, so an older
+binary can read a config file written by a newer one.
+
 OAuth credentials are tried in this order: environment token, macOS Keychain,
 `.credentials.json`, and (on Linux) `secret-tool`. A missing credential,
 network failure, timeout, or malformed response simply hides the optional OAuth
