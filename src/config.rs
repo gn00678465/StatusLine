@@ -38,24 +38,16 @@ impl Config {
     // TODO(config-file): drop this allow once `Config::load` calls this from `main.rs` (batch 3).
     #[allow(dead_code)]
     pub(crate) fn resolve(env: EnvValues, file: FileConfig) -> Self {
-        let EnvValues {
-            usage_style,
-            git_cache_ttl,
-            columns,
-        } = env;
-        let FileConfig {
-            usage_style: file_usage_style,
-            git_cache_ttl: file_git_cache_ttl,
-        } = file;
-        let _ = (
-            usage_style,
-            git_cache_ttl,
-            columns,
-            file_usage_style,
-            file_git_cache_ttl,
-        );
+        let usage_style = non_empty(env.usage_style).or(file.usage_style);
+        let git_cache_ttl =
+            non_empty(env.git_cache_ttl).or_else(|| file.git_cache_ttl.map(|ttl| ttl.to_string()));
+        let columns = non_empty(env.columns);
 
-        todo!("combine env and file values, env takes priority per key")
+        Self::from_values(
+            usage_style.as_deref(),
+            git_cache_ttl.as_deref(),
+            columns.as_deref(),
+        )
     }
 
     pub(crate) fn from_env() -> Self {
@@ -93,6 +85,12 @@ impl Config {
     pub(crate) fn columns(&self) -> usize {
         self.columns
     }
+}
+
+// TODO(config-file): drop this allow once `Config::resolve` is reachable from `main.rs` (batch 3).
+#[allow(dead_code)]
+fn non_empty(value: Option<String>) -> Option<String> {
+    value.filter(|value| !value.is_empty())
 }
 
 fn parse_usage_style(value: Option<&str>) -> UsageStyle {
