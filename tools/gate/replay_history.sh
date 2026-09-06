@@ -12,9 +12,11 @@ set -eu
 export PATH="$HOME/.cargo/bin:$PATH"
 base=$1
 scope=$2
-artifact_dir=".gate/$scope"
-mkdir -p "$artifact_dir/replay"
 repo_root=$(git rev-parse --show-toplevel)
+# Absolute: run_suite cd's into the scratch worktree, so a relative log path
+# would resolve there instead of under the repo's artifact root.
+artifact_dir="$repo_root/.gate/$scope"
+mkdir -p "$artifact_dir/replay"
 wt="$repo_root/../$(basename "$repo_root")-replay"
 export CARGO_TARGET_DIR="$repo_root/$artifact_dir/replay-target"
 

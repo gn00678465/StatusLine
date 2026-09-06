@@ -89,15 +89,21 @@ check_versions() {
     return 2
   fi
   rc=0
+  # CR is stripped into a temp copy (not a pipe: a piped `while` runs in a
+  # subshell and would lose rc, failing open) so a checkout under
+  # core.autocrlf=true does not turn every command into `<cmd> --version\r`.
+  stripped=$(mktemp)
+  tr -d '\r' < "$versions_file" > "$stripped"
   while IFS='	' read -r name expected command; do
     case "$name" in ''|'#'*) continue ;; esac
-    actual=$($command 2>&1 | head -n 1)
+    actual=$($command 2>&1 | head -n 1 | tr -d '\r')
     if [ "$actual" != "$expected" ]; then
       echo "FAIL: version drift for $name: expected '$expected', got '$actual'"
       rc=1
     else
       echo "ok: $name = $actual"
     fi
-  done < "$versions_file"
+  done < "$stripped"
+  rm -f "$stripped"
   return "$rc"
 }
