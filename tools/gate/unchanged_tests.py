@@ -50,11 +50,17 @@ def extract_fn(source: str, name: str) -> str:
     raise LookupError(f"function {name} has unbalanced braces")
 
 
+TEST_MODULE = re.compile(r"^#\[cfg\(test\)\]\r?\nmod tests\b", re.M)
+
+
 def test_module(source: str) -> str:
-    idx = source.find("#[cfg(test)]")
-    if idx < 0:
-        raise LookupError("no #[cfg(test)] module")
-    return source[idx:]
+    # Anchor on the module itself: a file may carry an earlier, indented
+    # `#[cfg(test)]` on a helper fn, which is product code and must not widen
+    # the compared region.
+    m = TEST_MODULE.search(source)
+    if not m:
+        raise LookupError("no `#[cfg(test)] mod tests` module")
+    return source[m.start():]
 
 
 def lock_names(text: str) -> set[str]:

@@ -98,6 +98,15 @@ grep -q "^$src:$first_exec:" "$tmp/product.txt" || { echo "SELFTEST FAIL: added_
 if grep -q "^$src:$after:" "$tmp/product.txt"; then echo "SELFTEST FAIL: added_lines kept a test-module line"; exit 1; fi
 echo "selftest ok: added_lines: product line kept, test-module line excluded"
 expect_rc 2 "added_lines: test-module-only diff is rc 2" python3 tools/gate/added_lines.py --base "$base" --diff-file "$tmp/diff-testonly.txt"
+# An indented `#[cfg(test)]` on a helper fn (as in src/main.rs) must NOT end
+# the product region: a product line after it is still scanned.
+mkdir -p "$tmp/synth/src"
+printf 'fn a() {}\n    #[cfg(test)]\n    fn helper() {}\nfn product_after_helper() {}\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\n' > "$tmp/synth/src/x.rs"
+printf 'diff --git a/src/x.rs b/src/x.rs\n--- a/src/x.rs\n+++ b/src/x.rs\n@@ -0,0 +4,1 @@\n+x\n@@ -0,0 +7,1 @@\n+y\n' > "$tmp/diff-synth.txt"
+if ! python3 tools/gate/added_lines.py --base "$base" --diff-file "$tmp/diff-synth.txt" --source-root "$tmp/synth" > "$tmp/product-synth.txt"; then echo "SELFTEST FAIL: added_lines synthetic diff"; exit 1; fi
+grep -q '^src/x.rs:4:' "$tmp/product-synth.txt" || { echo "SELFTEST FAIL: added_lines cut the product region at an indented helper attribute"; exit 1; }
+if grep -q '^src/x.rs:7:' "$tmp/product-synth.txt"; then echo "SELFTEST FAIL: added_lines kept a mod tests line"; exit 1; fi
+echo "selftest ok: added_lines: indented helper #[cfg(test)] does not end the product region"
 
 # --- unchanged_tests.py ------------------------------------------------------
 git show HEAD:src/main.rs | sed 's/assert_eq!(app.render_input(""), "Claude");/assert_eq!(app.render_input(""), "Claud");/' > "$tmp/main-mutated.rs"
@@ -106,6 +115,11 @@ if cmp -s "$tmp/main-mutated.rs" "$tmp/main-orig.rs"; then
   echo "SELFTEST FAIL: mutation of src/main.rs test module did not apply"; exit 1
 fi
 expect_rc 1 "unchanged_tests: mutated inline test fails" python3 tools/gate/unchanged_tests.py --base "$base" --override "src/main.rs=$tmp/main-mutated.rs"
+# Positive control: a product-only edit in src/main.rs (above `mod tests`, and
+# after the indented #[cfg(test)] helper attribute) must pass.
+git show HEAD:src/main.rs | sed 's/const FALLBACK_OUTPUT: &str = "Claude";/const FALLBACK_OUTPUT: \&str = "Claude"; \/\/ selftest product edit/' > "$tmp/main-product-edit.rs"
+if cmp -s "$tmp/main-product-edit.rs" "$tmp/main-orig.rs"; then echo "SELFTEST FAIL: product edit of src/main.rs did not apply"; exit 1; fi
+expect_rc 0 "unchanged_tests: product-only edit in main.rs passes (positive control)" python3 tools/gate/unchanged_tests.py --base "$base" --override "src/main.rs=$tmp/main-product-edit.rs"
 printf '[package]\nname = "cc-statusline"\nversion = "9.9.9"\n' > "$tmp/cargo-bumped.toml"
 expect_rc 1 "unchanged_tests: version bump fails" python3 tools/gate/unchanged_tests.py --base "$base" --override "Cargo.toml=$tmp/cargo-bumped.toml"
 printf 'fn nothing() {}\n' > "$tmp/no-tests.rs"

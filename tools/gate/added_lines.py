@@ -68,7 +68,14 @@ def main() -> int:
         count = 0
         for rel, lines in sorted(added(diff_text).items()):
             source = (Path(args.source_root) / rel).read_text(encoding="utf-8").splitlines()
-            marker = next((i + 1 for i, t in enumerate(source) if t.strip() == "#[cfg(test)]"), len(source) + 1)
+            # Anchor on `#[cfg(test)]` at column 0 immediately followed by
+            # `mod tests`: an indented `#[cfg(test)]` on a helper fn is product
+            # code and must not cut the scan short.
+            marker = next(
+                (i + 1 for i, t in enumerate(source)
+                 if t == "#[cfg(test)]" and i + 1 < len(source) and source[i + 1].startswith("mod tests")),
+                len(source) + 1,
+            )
             for line in lines:
                 if line < marker and line - 1 < len(source):
                     print(f"{rel}:{line}: {source[line - 1]}")
