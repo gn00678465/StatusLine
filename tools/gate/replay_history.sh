@@ -3,8 +3,10 @@
 #   baseline  — the full suite at <base>; which tests already fail there
 #   RED replay — every commit in <base>..HEAD is checked out in a scratch
 #                worktree and the suite is run. Commits whose subject starts
-#                with `test` are RED commits and must fail; every other commit
-#                must pass. This replays the RED -> GREEN ladder from git alone.
+#                with `test: RED` are RED commits and must fail; every other
+#                commit (GREEN, docs, build, and `test:` commits that only
+#                strengthen an already-passing test as regression armor) must
+#                pass. This replays the RED -> GREEN ladder from git alone.
 #
 # Usage: sh tools/gate/replay_history.sh <base> <scope>
 # Writes .gate/<scope>/baseline.md and .gate/<scope>/red.md plus per-commit logs.
@@ -55,7 +57,7 @@ cat "$artifact_dir/baseline.md"
 mismatch=0
 for sha in $(git rev-list --reverse "$merge_base..HEAD"); do
   subject=$(git log -1 --format=%s "$sha")
-  case "$subject" in test*) expected=fail ;; *) expected=pass ;; esac
+  case "$subject" in "test: RED"*) expected=fail ;; *) expected=pass ;; esac
   (cd "$wt" && git checkout -q --detach "$sha")
   status=$(run_suite "$artifact_dir/replay/$sha.txt")
   case "$status" in ok) observed=pass ;; *) observed=fail ;; esac
