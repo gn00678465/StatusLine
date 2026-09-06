@@ -63,17 +63,21 @@ pub(crate) fn read_config_file(path: &Path) -> (FileConfig, Option<String>) {
         Err(error) => return (FileConfig::default(), Some(diagnostic(path, &error))),
     };
 
-    let mut contents = String::new();
+    let mut bytes = Vec::new();
     if let Err(error) = file
         .take(MAX_CONFIG_FILE_BYTES as u64 + 1)
-        .read_to_string(&mut contents)
+        .read_to_end(&mut bytes)
     {
         return (FileConfig::default(), Some(diagnostic(path, &error)));
     }
-    if contents.len() > MAX_CONFIG_FILE_BYTES {
+    if bytes.len() > MAX_CONFIG_FILE_BYTES {
         let message = format!("file exceeds the {MAX_CONFIG_FILE_BYTES}-byte limit");
         return (FileConfig::default(), Some(diagnostic(path, &message)));
     }
+    let contents = match String::from_utf8(bytes) {
+        Ok(contents) => contents,
+        Err(error) => return (FileConfig::default(), Some(diagnostic(path, &error))),
+    };
 
     match parse_on_dedicated_thread(contents) {
         Ok(file_config) => (file_config, None),
