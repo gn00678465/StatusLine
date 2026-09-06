@@ -2,10 +2,18 @@
 //! optional `~/.config/cc-statusline/config.toml` file.
 
 use std::ffi::OsStr;
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_GIT_CACHE_TTL_SECONDS: u64 = 2;
 const DEFAULT_COLUMNS: usize = 100;
+/// A 1 MiB main-thread stack overflows parsing `basic-toml` around nesting
+/// depth 2500 (~5 KB file); this cap keeps every read far below that.
+const MAX_CONFIG_FILE_BYTES: usize = 16_384;
+/// A dedicated 16 MiB stack parses nesting depth 32768 (~64 KB) without
+/// overflowing, leaving roughly 5x headroom over `MAX_CONFIG_FILE_BYTES`.
+const PARSER_STACK_SIZE_BYTES: usize = 16 << 20;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum UsageStyle {
@@ -47,17 +55,48 @@ pub(crate) fn config_file_path(
 }
 
 pub(crate) fn read_config_file(path: &Path) -> (FileConfig, Option<String>) {
-    let contents = match std::fs::read_to_string(path) {
-        Ok(contents) => contents,
+    let file = match File::open(path) {
+        Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return (FileConfig::default(), None)
         }
         Err(error) => return (FileConfig::default(), Some(diagnostic(path, &error))),
     };
 
-    match basic_toml::from_str::<FileConfig>(&contents) {
+    let mut contents = String::new();
+    if let Err(error) = file
+        .take(MAX_CONFIG_FILE_BYTES as u64 + 1)
+        .read_to_string(&mut contents)
+    {
+        return (FileConfig::default(), Some(diagnostic(path, &error)));
+    }
+    if contents.len() > MAX_CONFIG_FILE_BYTES {
+        let message = format!("file exceeds the {MAX_CONFIG_FILE_BYTES}-byte limit");
+        return (FileConfig::default(), Some(diagnostic(path, &message)));
+    }
+
+    match parse_on_dedicated_thread(contents) {
         Ok(file_config) => (file_config, None),
-        Err(error) => (FileConfig::default(), Some(diagnostic(path, &error))),
+        Err(message) => (FileConfig::default(), Some(diagnostic(path, &message))),
+    }
+}
+
+/// Parses on a dedicated large-stack thread so a deeply nested but
+/// under-the-byte-cap file cannot overflow the caller's stack. A spawn
+/// failure, a parser panic, or a parse error all collapse into one
+/// diagnostic string — this never panics or unwraps.
+fn parse_on_dedicated_thread(contents: String) -> Result<FileConfig, String> {
+    let spawned = std::thread::Builder::new()
+        .stack_size(PARSER_STACK_SIZE_BYTES)
+        .spawn(move || basic_toml::from_str::<FileConfig>(&contents));
+
+    match spawned {
+        Ok(handle) => match handle.join() {
+            Ok(Ok(file_config)) => Ok(file_config),
+            Ok(Err(error)) => Err(error.to_string()),
+            Err(_) => Err("config file parser thread panicked".to_owned()),
+        },
+        Err(error) => Err(error.to_string()),
     }
 }
 
