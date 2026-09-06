@@ -129,6 +129,27 @@ fn env_overrides_config_file_in_real_binary() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn deeply_nested_config_file_does_not_crash() -> Result<(), Box<dyn Error>> {
+    let (command, home, _claude_config_dir) = isolated_command()?;
+    let mut contents = String::from("x = ");
+    contents.push_str(&"[".repeat(4000));
+    contents.push_str(&"]".repeat(4000));
+    write_config_file(&home, &contents)?;
+
+    let (status, stdout, stderr) = run_with_fixture(command)?;
+
+    assert!(status.success());
+    assert!(stdout.contains("Fable 5"), "stdout: {stdout}");
+    assert!(
+        stdout.contains('\u{2593}') || stdout.contains('\u{2591}'),
+        "stdout: {stdout}"
+    );
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+
+    Ok(())
+}
+
+#[test]
 fn renders_with_defaults_when_no_home_directory_exists() -> Result<(), Box<dyn Error>> {
     let (mut command, _home, _claude_config_dir) = isolated_command()?;
 

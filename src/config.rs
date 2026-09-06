@@ -237,6 +237,48 @@ mod tests {
     }
 
     #[test]
+    fn oversized_config_file_yields_defaults_with_diagnostic() -> Result<(), Box<dyn Error>> {
+        const LIMIT: usize = 16_384;
+        let padded_contents = |total_len: usize| -> String {
+            let mut contents = String::from("usage_style = \"dots\"\n");
+            contents.push_str(&"#".repeat(total_len - contents.len()));
+
+            contents
+        };
+
+        let dir = tempdir()?;
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, padded_contents(LIMIT + 1))?;
+
+        let (file, diagnostic) = read_config_file(&path);
+        let config = Config::resolve(EnvValues::default(), file);
+
+        assert_eq!(config.usage_style(), UsageStyle::Bar);
+        assert_eq!(config.git_cache_ttl_seconds(), 2);
+        let diagnostic =
+            diagnostic.ok_or("expected a diagnostic for a file over the 16384-byte limit")?;
+        assert!(
+            diagnostic.contains(&path.display().to_string()),
+            "diagnostic {diagnostic:?} should mention the path"
+        );
+        assert!(
+            diagnostic.contains("16384"),
+            "diagnostic {diagnostic:?} should mention the 16384-byte limit"
+        );
+
+        std::fs::write(&path, padded_contents(LIMIT))?;
+        let (file, diagnostic) = read_config_file(&path);
+
+        assert_eq!(
+            Config::resolve(EnvValues::default(), file).usage_style(),
+            UsageStyle::Dots
+        );
+        assert_eq!(diagnostic, None);
+
+        Ok(())
+    }
+
+    #[test]
     fn config_path_prefers_xdg_config_home_then_home_dot_config_then_none() {
         let xdg = OsStr::new("/x");
         let home = Path::new("/h");
