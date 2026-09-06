@@ -208,10 +208,8 @@ mod tests {
             assert_eq!(config.git_cache_ttl_seconds(), 2, "contents: {contents}");
             assert_eq!(config.columns(), 100, "contents: {contents}");
 
-            let diagnostic = match diagnostic {
-                Some(diagnostic) => diagnostic,
-                None => panic!("expected a diagnostic for contents: {contents}"),
-            };
+            let diagnostic = diagnostic
+                .ok_or_else(|| format!("expected a diagnostic for contents: {contents}"))?;
             assert!(
                 diagnostic.contains(&path.display().to_string()),
                 "diagnostic {diagnostic:?} should mention the path for contents: {contents}"
