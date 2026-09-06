@@ -126,7 +126,8 @@ same ten positions and color thresholds across context and limits.
 when that variable is set and non-empty) is an optional, user-created file —
 cc-statusline never creates, writes, or requires it. Per key, a non-empty
 environment variable wins over the file, which wins over the built-in
-default:
+default; an environment variable that is already set keeps working even
+when the file itself is ignored below.
 
 ```toml
 # ~/.config/cc-statusline/config.toml
@@ -135,9 +136,14 @@ git_cache_ttl = 2      # 0-60 seconds, Git status cache
 ```
 
 `COLUMNS` cannot be set from the file — it is a terminal property, not a
-preference. A missing file is silent. An unreadable or malformed file (bad
-TOML syntax, wrong value type, or an out-of-range integer) is ignored in full:
-every key falls back to its default, and one line is printed to stderr
+preference. A missing file is silent. A value of the right TOML type but out
+of range (`usage_style = "foo"`, `git_cache_ttl = 99`) falls back to that
+key's own default, the same as an invalid environment variable — for example
+`git_cache_ttl = 99` is clamped to `60`, it does not cause the file to be
+ignored. Only a file that fails to parse at all — bad TOML syntax, or a value
+of the wrong type (`usage_style = 1`, `git_cache_ttl = "2"`,
+`git_cache_ttl = -1`) — is ignored in full: every key falls back to its
+default, and one line is printed to stderr
 (`cc-statusline: ignoring config file <path>: <error>`). stdout and the exit
 code are never affected. Unknown keys in the file are ignored, so an older
 binary can read a config file written by a newer one.
