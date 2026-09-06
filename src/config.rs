@@ -1,4 +1,8 @@
-//! Parses status-line configuration from environment variables.
+//! Parses status-line configuration from environment variables and an
+//! optional `~/.config/cc-statusline/config.toml` file.
+
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 
 const DEFAULT_GIT_CACHE_TTL_SECONDS: u64 = 2;
 const DEFAULT_COLUMNS: usize = 100;
@@ -25,6 +29,20 @@ pub(crate) struct EnvValues {
     usage_style: Option<String>,
     git_cache_ttl: Option<String>,
     columns: Option<String>,
+}
+
+// TODO(config-file): drop this allow once `Config::load` calls this from `main.rs` (batch 3).
+#[allow(dead_code)]
+pub(crate) fn config_file_path(xdg_config_home: Option<&OsStr>, home: Option<&Path>) -> Option<PathBuf> {
+    let _ = (xdg_config_home, home);
+    todo!("prefer $XDG_CONFIG_HOME, then ~/.config, then None")
+}
+
+// TODO(config-file): drop this allow once `Config::load` calls this from `main.rs` (batch 3).
+#[allow(dead_code)]
+pub(crate) fn read_config_file(path: &Path) -> (FileConfig, Option<String>) {
+    let _ = path;
+    todo!("read + parse TOML, returning defaults and a diagnostic on any error")
 }
 
 #[derive(Debug)]
@@ -115,7 +133,104 @@ fn parse_columns(value: Option<&str>) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, EnvValues, FileConfig, UsageStyle};
+    use std::error::Error;
+    use std::ffi::OsStr;
+    use std::path::{Path, PathBuf};
+
+    use tempfile::tempdir;
+
+    use super::{config_file_path, read_config_file, Config, EnvValues, FileConfig, UsageStyle};
+
+    #[test]
+    fn missing_config_file_yields_defaults_without_diagnostic() -> Result<(), Box<dyn Error>> {
+        let dir = tempdir()?;
+        let path = dir.path().join("does-not-exist.toml");
+
+        let (file, diagnostic) = read_config_file(&path);
+        let config = Config::resolve(EnvValues::default(), file);
+
+        assert_eq!(config.usage_style(), UsageStyle::Bar);
+        assert_eq!(config.git_cache_ttl_seconds(), 2);
+        assert_eq!(config.columns(), 100);
+        assert_eq!(diagnostic, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_config_file_yields_defaults_with_diagnostic() -> Result<(), Box<dyn Error>> {
+        let malformed_contents = [
+            "usage_style = ",
+            "usage_style = 1",
+            "git_cache_ttl = -1",
+            "git_cache_ttl = \"2\"",
+        ];
+
+        for contents in malformed_contents {
+            let dir = tempdir()?;
+            let path = dir.path().join("config.toml");
+            std::fs::write(&path, contents)?;
+
+            let (file, diagnostic) = read_config_file(&path);
+            let config = Config::resolve(EnvValues::default(), file);
+
+            assert_eq!(config.usage_style(), UsageStyle::Bar, "contents: {contents}");
+            assert_eq!(
+                config.git_cache_ttl_seconds(),
+                2,
+                "contents: {contents}"
+            );
+            assert_eq!(config.columns(), 100, "contents: {contents}");
+
+            let diagnostic = match diagnostic {
+                Some(diagnostic) => diagnostic,
+                None => panic!("expected a diagnostic for contents: {contents}"),
+            };
+            assert!(
+                diagnostic.contains(&path.display().to_string()),
+                "diagnostic {diagnostic:?} should mention the path for contents: {contents}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn unreadable_config_path_yields_defaults_with_diagnostic() -> Result<(), Box<dyn Error>> {
+        let dir = tempdir()?;
+        let path = dir.path().join("config.toml");
+        std::fs::create_dir(&path)?;
+
+        let (file, diagnostic) = read_config_file(&path);
+        let config = Config::resolve(EnvValues::default(), file);
+
+        assert_eq!(config.usage_style(), UsageStyle::Bar);
+        assert_eq!(config.git_cache_ttl_seconds(), 2);
+        assert_eq!(config.columns(), 100);
+        assert!(diagnostic.is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_path_prefers_xdg_config_home_then_home_dot_config_then_none() {
+        let xdg = OsStr::new("/x");
+        let home = Path::new("/h");
+
+        assert_eq!(
+            config_file_path(Some(xdg), Some(home)),
+            Some(PathBuf::from("/x/cc-statusline/config.toml"))
+        );
+        assert_eq!(
+            config_file_path(None, Some(home)),
+            Some(PathBuf::from("/h/.config/cc-statusline/config.toml"))
+        );
+        assert_eq!(
+            config_file_path(Some(OsStr::new("")), Some(home)),
+            Some(PathBuf::from("/h/.config/cc-statusline/config.toml"))
+        );
+        assert_eq!(config_file_path(None, None), None);
+    }
 
     #[test]
     fn file_usage_style_dots_applies_when_env_absent() {
