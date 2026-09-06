@@ -129,6 +129,48 @@ fn env_overrides_config_file_in_real_binary() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn renders_with_defaults_when_no_home_directory_exists() -> Result<(), Box<dyn Error>> {
+    let (mut command, _home, _claude_config_dir) = isolated_command()?;
+
+    // XDG_RUNTIME_DIR is not consulted by config_file_path (only
+    // XDG_CONFIG_HOME/HOME/USERPROFILE are), so pointing it at a safe,
+    // pre-seeded cache dir keeps the update checker off the real network
+    // even with no home directory at all.
+    let runtime_dir = TempDir::new()?;
+    let runtime_cache_dir = runtime_dir.path().join("StatusLine");
+    std::fs::create_dir_all(&runtime_cache_dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))?;
+        std::fs::set_permissions(&runtime_cache_dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    std::fs::write(
+        runtime_cache_dir.join("statusline-version-cache.json"),
+        r#"{"tag_name":"v0.0.0"}"#,
+    )?;
+
+    command
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env_remove("HOME")
+        .env_remove("USERPROFILE")
+        .env_remove("XDG_CONFIG_HOME");
+
+    let (status, stdout, stderr) = run_with_fixture(command)?;
+
+    assert!(status.success());
+    assert!(stdout.contains("Fable 5"), "stdout: {stdout}");
+    assert!(
+        stdout.contains('\u{2593}') || stdout.contains('\u{2591}'),
+        "stdout: {stdout}"
+    );
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+
+    Ok(())
+}
+
+#[test]
 fn renders_fallback_for_non_json_input() -> Result<(), Box<dyn Error>> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_cc-statusline"))
         .stdin(Stdio::piped())
