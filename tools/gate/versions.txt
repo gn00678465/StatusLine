@@ -1,0 +1,6 @@
+# name<TAB>expected first line of --version<TAB>command
+cargo	cargo 1.97.1 (c980f4866 2026-06-30)	cargo --version
+rustc	rustc 1.97.1 (8bab26f4f 2026-07-14)	rustc --version
+cargo-llvm-cov	cargo-llvm-cov 0.9.0	cargo llvm-cov --version
+cargo-mutants	cargo-mutants 27.1.0	cargo mutants --version
+python3	Python 3.13.15	python3 --version

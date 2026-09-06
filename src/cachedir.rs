@@ -188,7 +188,7 @@ fn create_private_temp_file(parent_dir: &Path) -> std::io::Result<(File, PathBuf
     ))
 }
 
-fn home_directory() -> Option<PathBuf> {
+pub(crate) fn home_directory() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         std::env::var_os("USERPROFILE")

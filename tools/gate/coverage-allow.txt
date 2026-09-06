@@ -1,0 +1,7 @@
+# Accepted uncovered lines for the changed-line coverage gate.
+# Format: path|exact trimmed line text|reason
+# Every entry must match exactly one currently-uncovered line, or the gate
+# fails closed (rc 2). These lines are printed verbatim in the evidence report.
+src/config.rs|Err(_) => Err("config file parser thread panicked".to_owned()),|defensive arm: basic-toml does not panic on any input within the 16 KiB cap; reaching it would require mocking the parser thread (the unit under test), which the gate forbids
+src/config.rs|Err(error) => Err(error.to_string()),|defensive arm: std::thread::Builder::spawn fails only on OS thread-resource exhaustion, which no test can induce deterministically without mocking the unit under test
+src/config.rs|return (FileConfig::default(), Some(diagnostic(path, &error)));|platform split, gate ran on Windows: read_to_end after a successful open fails only for a directory on Unix (S10 unreadable_config_path covers it there); on Windows File::open of a directory fails first, so S10 covers the open-error line and this read-error line is unreachable

@@ -7,6 +7,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增使用者設定檔 `~/.config/cc-statusline/config.toml`（尊重
+  `XDG_CONFIG_HOME`），可設定 `usage_style`／`git_cache_ttl`。優先序逐鍵決
+  定：非空環境變數 > 設定檔 > 內建預設。binary 永不建立或寫入該檔案；設定
+  檔不存在時靜默套用預設，格式錯誤或無法讀取時整份忽略並於 stderr 印出一行
+  `cc-statusline: ignoring config file <path>: <error>`，stdout 與 exit code
+  不受影響。檔案上限 16 KiB，超過即視為無法讀取（整份忽略＋stderr 提示）；
+  TOML 解析在專用的 16 MiB stack thread 上執行，避免深度巢狀內容造成 stack
+  overflow。
+
 ## [v2.0.1] - 2026-08-23
 
 ### Documentation
