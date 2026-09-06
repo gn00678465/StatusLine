@@ -1,7 +1,7 @@
 # SPEC — 使用者設定檔 `~/.config/cc-statusline/config.toml` (Tier 2)
 
 - `spec_version`: v3
-- `status`: approved
+- `status`: shipped
 - `tier`: 2
 - `scope`: `config-file`
 - 研究依據: `docs/research/user-config-file-conventions.md`
