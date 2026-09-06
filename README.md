@@ -137,18 +137,18 @@ git_cache_ttl = 2      # 0-60 seconds, Git status cache
 
 `COLUMNS` cannot be set from the file — it is a terminal property, not a
 preference. A missing file is silent. A value of the right TOML type but out
-of range (`usage_style = "foo"`, `git_cache_ttl = 99`) falls back to that
-key's own default, the same as an invalid environment variable — for example
-`git_cache_ttl = 99` is clamped to `60`, it does not cause the file to be
-ignored. Only a file that fails to parse at all — bad TOML syntax, or a value
-of the wrong type (`usage_style = 1`, `git_cache_ttl = "2"`,
-`git_cache_ttl = -1`) — is ignored in full: every key falls back to its
-default, and one line is printed to stderr
-(`cc-statusline: ignoring config file <path>: <error>`). stdout and the exit
-code are never affected. Unknown keys in the file are ignored, so an older
-binary can read a config file written by a newer one. The file is capped at
-16 KiB; a larger file is treated the same as a malformed one — ignored in
-full, with a stderr diagnostic naming the path and the limit.
+of range reuses that key's own existing validation rule instead of causing
+the file to be ignored: `usage_style = "foo"` falls back to `bar` (the only
+rule `usage_style` has), while `git_cache_ttl = 99` is *clamped* to `60`
+rather than falling back to the `2`-second default. Only a file that fails
+to parse at all — bad TOML syntax, or a value of the wrong type
+(`usage_style = 1`, `git_cache_ttl = "2"`, `git_cache_ttl = -1`) — is ignored
+in full: every key falls back to its default, and one line is printed to
+stderr (`cc-statusline: ignoring config file <path>: <error>`). stdout and
+the exit code are never affected. Unknown keys in the file are ignored, so
+an older binary can read a config file written by a newer one. The file is
+capped at 16 KiB; a larger file is treated the same as a malformed one —
+ignored in full, with a stderr diagnostic naming the path and the limit.
 
 OAuth credentials are tried in this order: environment token, macOS Keychain,
 `.credentials.json`, and (on Linux) `secret-tool`. A missing credential,
