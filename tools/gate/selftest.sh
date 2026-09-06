@@ -85,6 +85,20 @@ printf '%s|this line does not exist anywhere|stale\n' "$src" > "$tmp/allow-stale
 expect_rc 0 "changed_lines: allowlisted uncovered line is accepted" $cl "$tmp/diff.txt" --lcov "$tmp/cov-zero.lcov" --allow "$tmp/allow-match.txt"
 expect_rc 2 "changed_lines: stale allowlist entry is rc 2" $cl "$tmp/diff.txt" --lcov "$tmp/cov-good.lcov" --allow "$tmp/allow-stale.txt"
 
+# --- added_lines.py (product-line extractor) ---------------------------------
+# A line added before the file's #[cfg(test)] marker is product; one added
+# after it is not; a diff with only test-module lines is rc 2.
+marker=$(grep -n '^#\[cfg(test)\]$' "$src" | head -n 1 | cut -d: -f1)
+[ -n "$marker" ] || { echo "SELFTEST FAIL: no #[cfg(test)] marker in $src"; exit 1; }
+after=$((marker + 2))
+printf 'diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n@@ -0,0 +%s,1 @@\n+x\n@@ -0,0 +%s,1 @@\n+y\n' "$src" "$src" "$src" "$src" "$first_exec" "$after" > "$tmp/diff-mixed.txt"
+printf 'diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n@@ -0,0 +%s,1 @@\n+y\n' "$src" "$src" "$src" "$src" "$after" > "$tmp/diff-testonly.txt"
+if ! python3 tools/gate/added_lines.py --base "$base" --diff-file "$tmp/diff-mixed.txt" > "$tmp/product.txt"; then echo "SELFTEST FAIL: added_lines mixed diff"; exit 1; fi
+grep -q "^$src:$first_exec:" "$tmp/product.txt" || { echo "SELFTEST FAIL: added_lines dropped a product line"; exit 1; }
+if grep -q "^$src:$after:" "$tmp/product.txt"; then echo "SELFTEST FAIL: added_lines kept a test-module line"; exit 1; fi
+echo "selftest ok: added_lines: product line kept, test-module line excluded"
+expect_rc 2 "added_lines: test-module-only diff is rc 2" python3 tools/gate/added_lines.py --base "$base" --diff-file "$tmp/diff-testonly.txt"
+
 # --- unchanged_tests.py ------------------------------------------------------
 git show HEAD:src/main.rs | sed 's/assert_eq!(app.render_input(""), "Claude");/assert_eq!(app.render_input(""), "Claud");/' > "$tmp/main-mutated.rs"
 git show HEAD:src/main.rs > "$tmp/main-orig.rs"

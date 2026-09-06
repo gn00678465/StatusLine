@@ -108,14 +108,19 @@ layer_mutation_kill_sample() {
 layer_real_execution() { capture "$artifact_dir/real-execution.txt" sh tools/gate/real_execution.sh "$artifact_dir"; }
 layer_must_not_scans() {
   added="$artifact_dir/added-lines.txt"
-  # stdout purity: no new print!/println! anywhere in the change
-  must_not_match '\bprintln!\(|\bprint!\(' "$added" || return $?
-  # panic paths in new code (also clippy-denied; kept as a spec row)
+  product="$artifact_dir/added-product-lines.txt"
+  # Product lines only (src/ before the #[cfg(test)] marker): the stdout,
+  # filesystem-write and subprocess/network constraints are about the binary's
+  # behaviour; tests legitimately write temp files and spawn the binary.
+  python3 tools/gate/added_lines.py --base "$base" > "$product" || return $?
+  # stdout purity: no new print!/println! in product code
+  must_not_match '\bprintln!\(|\bprint!\(' "$product" || return $?
+  # panic paths anywhere in the change (also clippy-denied; kept as a spec row)
   must_not_match '\.unwrap\(\)|\.expect\(|panic!\(|unimplemented!\(|todo!\(' "$added" || return $?
-  # config file is read-only: no filesystem writes introduced
-  must_not_match 'fs::(write|create_dir|create_dir_all|remove_file|remove_dir|rename)|File::create|OpenOptions::new' "$added" || return $?
-  # no new subprocess / network in the change
-  must_not_match 'Command::new|ureq::' "$added" || return $?
+  # config file is read-only: no filesystem writes introduced in product code
+  must_not_match 'fs::(write|create_dir|create_dir_all|remove_file|remove_dir|rename)|File::create|OpenOptions::new' "$product" || return $?
+  # no new subprocess / network in product code
+  must_not_match 'Command::new|ureq::' "$product" || return $?
   # existing tests, fixtures, package version, lockfile additions
   python3 tools/gate/unchanged_tests.py --base "$base"
 }
