@@ -6,12 +6,18 @@ use tempfile::TempDir;
 
 /// Spawns the real binary with an isolated home/config so no test touches the
 /// developer's real `~/.config` or triggers a network call from the update
-/// checker (a fresh version cache is pre-seeded).
+/// checker (a fresh version cache is pre-seeded). `PATH` is pointed at an
+/// empty directory so `git`, `security`, and `secret-tool` all fail to
+/// spawn instead of the child possibly resolving real developer-machine
+/// credentials (the compiled binary itself is launched by its full path and
+/// needs no `PATH` entry).
 fn isolated_command() -> Result<(Command, TempDir, TempDir), Box<dyn Error>> {
     let home = TempDir::new()?;
     let claude_config_dir = TempDir::new()?;
     let cache_dir = home.path().join(".cache").join("StatusLine");
     std::fs::create_dir_all(&cache_dir)?;
+    let empty_path_dir = home.path().join("empty-path");
+    std::fs::create_dir_all(&empty_path_dir)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -33,6 +39,7 @@ fn isolated_command() -> Result<(Command, TempDir, TempDir), Box<dyn Error>> {
         .env("USERPROFILE", home.path())
         .env("XDG_CONFIG_HOME", home.path())
         .env("CLAUDE_CONFIG_DIR", claude_config_dir.path())
+        .env("PATH", &empty_path_dir)
         .env_remove("STATUSLINE_USAGE_STYLE")
         .env_remove("STATUSLINE_GIT_CACHE_TTL")
         .env_remove("CLAUDE_CODE_OAUTH_TOKEN")
