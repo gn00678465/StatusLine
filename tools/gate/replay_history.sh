@@ -29,7 +29,7 @@ git worktree add --detach "$wt" "$merge_base" >/dev/null
 run_suite() {
   # prints "ok" or "FAILED" plus the result lines; never aborts the script
   log=$1
-  if (cd "$wt" && cargo test --all-targets > "$log" 2>&1); then echo ok; else echo FAILED; fi
+  if (cd "$wt" && cargo test --all-targets --no-fail-fast > "$log" 2>&1); then echo ok; else echo FAILED; fi
 }
 
 failing_tests() {
