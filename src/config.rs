@@ -9,6 +9,24 @@ pub(crate) enum UsageStyle {
     Dots,
 }
 
+// TODO(config-file): drop this allow once `Config::load` wires these into `main.rs` (batch 3).
+#[allow(dead_code)]
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(default)]
+pub(crate) struct FileConfig {
+    usage_style: Option<String>,
+    git_cache_ttl: Option<u64>,
+}
+
+// TODO(config-file): drop this allow once `Config::load` wires these into `main.rs` (batch 3).
+#[allow(dead_code)]
+#[derive(Clone, Debug, Default)]
+pub(crate) struct EnvValues {
+    usage_style: Option<String>,
+    git_cache_ttl: Option<String>,
+    columns: Option<String>,
+}
+
 #[derive(Debug)]
 pub(crate) struct Config {
     usage_style: UsageStyle,
@@ -17,6 +35,29 @@ pub(crate) struct Config {
 }
 
 impl Config {
+    // TODO(config-file): drop this allow once `Config::load` calls this from `main.rs` (batch 3).
+    #[allow(dead_code)]
+    pub(crate) fn resolve(env: EnvValues, file: FileConfig) -> Self {
+        let EnvValues {
+            usage_style,
+            git_cache_ttl,
+            columns,
+        } = env;
+        let FileConfig {
+            usage_style: file_usage_style,
+            git_cache_ttl: file_git_cache_ttl,
+        } = file;
+        let _ = (
+            usage_style,
+            git_cache_ttl,
+            columns,
+            file_usage_style,
+            file_git_cache_ttl,
+        );
+
+        todo!("combine env and file values, env takes priority per key")
+    }
+
     pub(crate) fn from_env() -> Self {
         let usage_style = std::env::var("STATUSLINE_USAGE_STYLE").ok();
         let git_cache_ttl = std::env::var("STATUSLINE_GIT_CACHE_TTL").ok();
@@ -76,7 +117,164 @@ fn parse_columns(value: Option<&str>) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, UsageStyle};
+    use super::{Config, EnvValues, FileConfig, UsageStyle};
+
+    #[test]
+    fn file_usage_style_dots_applies_when_env_absent() {
+        let env = EnvValues::default();
+        let file = FileConfig {
+            usage_style: Some("dots".to_owned()),
+            ..FileConfig::default()
+        };
+
+        assert_eq!(Config::resolve(env, file).usage_style(), UsageStyle::Dots);
+    }
+
+    #[test]
+    fn env_usage_style_overrides_file() {
+        let env_bar = EnvValues {
+            usage_style: Some("bar".to_owned()),
+            ..EnvValues::default()
+        };
+        let file_dots = FileConfig {
+            usage_style: Some("dots".to_owned()),
+            ..FileConfig::default()
+        };
+        assert_eq!(
+            Config::resolve(env_bar, file_dots).usage_style(),
+            UsageStyle::Bar
+        );
+
+        let env_dots = EnvValues {
+            usage_style: Some("dots".to_owned()),
+            ..EnvValues::default()
+        };
+        let file_bar = FileConfig {
+            usage_style: Some("bar".to_owned()),
+            ..FileConfig::default()
+        };
+        assert_eq!(
+            Config::resolve(env_dots, file_bar).usage_style(),
+            UsageStyle::Dots
+        );
+    }
+
+    #[test]
+    fn empty_env_value_is_absent_so_file_applies() {
+        let env = EnvValues {
+            usage_style: Some(String::new()),
+            ..EnvValues::default()
+        };
+        let file = FileConfig {
+            usage_style: Some("dots".to_owned()),
+            ..FileConfig::default()
+        };
+        assert_eq!(Config::resolve(env, file).usage_style(), UsageStyle::Dots);
+
+        let env = EnvValues {
+            git_cache_ttl: Some(String::new()),
+            ..EnvValues::default()
+        };
+        let file = FileConfig {
+            git_cache_ttl: Some(7),
+            ..FileConfig::default()
+        };
+        assert_eq!(Config::resolve(env, file).git_cache_ttl_seconds(), 7);
+    }
+
+    #[test]
+    fn file_git_cache_ttl_applies_and_clamps_to_60() {
+        let resolve_with_ttl = |ttl: u64| {
+            Config::resolve(
+                EnvValues::default(),
+                FileConfig {
+                    git_cache_ttl: Some(ttl),
+                    ..FileConfig::default()
+                },
+            )
+            .git_cache_ttl_seconds()
+        };
+
+        assert_eq!(resolve_with_ttl(7), 7);
+        assert_eq!(resolve_with_ttl(99), 60);
+        assert_eq!(resolve_with_ttl(0), 0);
+    }
+
+    #[test]
+    fn invalid_file_usage_style_falls_back_to_bar() {
+        let file = FileConfig {
+            usage_style: Some("foo".to_owned()),
+            ..FileConfig::default()
+        };
+
+        assert_eq!(
+            Config::resolve(EnvValues::default(), file).usage_style(),
+            UsageStyle::Bar
+        );
+    }
+
+    #[test]
+    fn unknown_file_keys_are_ignored() {
+        let file = FileConfig {
+            usage_style: Some("dots".to_owned()),
+            ..FileConfig::default()
+        };
+
+        assert_eq!(
+            Config::resolve(EnvValues::default(), file).usage_style(),
+            UsageStyle::Dots
+        );
+    }
+
+    #[test]
+    fn file_cannot_set_columns() {
+        let config = Config::resolve(EnvValues::default(), FileConfig::default());
+
+        assert_eq!(config.columns(), 100);
+    }
+
+    #[test]
+    fn env_only_behaviour_is_unchanged_without_file() {
+        let file = FileConfig::default();
+
+        let configured = Config::resolve(
+            EnvValues {
+                usage_style: Some("dots".to_owned()),
+                git_cache_ttl: Some("99".to_owned()),
+                columns: Some("250".to_owned()),
+            },
+            file.clone(),
+        );
+        assert_eq!(configured.usage_style(), UsageStyle::Dots);
+        assert_eq!(configured.git_cache_ttl_seconds(), 60);
+        assert_eq!(configured.columns(), 250);
+
+        let fallback = Config::resolve(
+            EnvValues {
+                usage_style: Some("invalid".to_owned()),
+                git_cache_ttl: Some("not-a-number".to_owned()),
+                columns: Some("0".to_owned()),
+            },
+            file.clone(),
+        );
+        assert_eq!(fallback.usage_style(), UsageStyle::Bar);
+        assert_eq!(fallback.git_cache_ttl_seconds(), 2);
+        assert_eq!(fallback.columns(), 100);
+
+        let negative_ttl = Config::resolve(
+            EnvValues {
+                usage_style: None,
+                git_cache_ttl: Some("-1".to_owned()),
+                columns: Some("not-a-number".to_owned()),
+            },
+            file.clone(),
+        );
+        assert_eq!(negative_ttl.git_cache_ttl_seconds(), 2);
+        assert_eq!(negative_ttl.columns(), 100);
+
+        let missing_columns = Config::resolve(EnvValues::default(), file);
+        assert_eq!(missing_columns.columns(), 100);
+    }
 
     #[test]
     fn parses_usage_style_ttl_and_columns_with_clamps_and_fallbacks() {
