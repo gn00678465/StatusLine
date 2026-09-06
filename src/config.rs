@@ -33,16 +33,47 @@ pub(crate) struct EnvValues {
 
 // TODO(config-file): drop this allow once `Config::load` calls this from `main.rs` (batch 3).
 #[allow(dead_code)]
-pub(crate) fn config_file_path(xdg_config_home: Option<&OsStr>, home: Option<&Path>) -> Option<PathBuf> {
-    let _ = (xdg_config_home, home);
-    todo!("prefer $XDG_CONFIG_HOME, then ~/.config, then None")
+pub(crate) fn config_file_path(
+    xdg_config_home: Option<&OsStr>,
+    home: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(xdg_config_home) = xdg_config_home.filter(|value| !value.is_empty()) {
+        return Some(
+            Path::new(xdg_config_home)
+                .join("cc-statusline")
+                .join("config.toml"),
+        );
+    }
+
+    home.map(|home| {
+        home.join(".config")
+            .join("cc-statusline")
+            .join("config.toml")
+    })
 }
 
 // TODO(config-file): drop this allow once `Config::load` calls this from `main.rs` (batch 3).
 #[allow(dead_code)]
 pub(crate) fn read_config_file(path: &Path) -> (FileConfig, Option<String>) {
-    let _ = path;
-    todo!("read + parse TOML, returning defaults and a diagnostic on any error")
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return (FileConfig::default(), None)
+        }
+        Err(error) => return (FileConfig::default(), Some(diagnostic(path, &error))),
+    };
+
+    match basic_toml::from_str::<FileConfig>(&contents) {
+        Ok(file_config) => (file_config, None),
+        Err(error) => (FileConfig::default(), Some(diagnostic(path, &error))),
+    }
+}
+
+fn diagnostic(path: &Path, error: &dyn std::fmt::Display) -> String {
+    format!(
+        "cc-statusline: ignoring config file {}: {error}",
+        path.display()
+    )
 }
 
 #[derive(Debug)]
@@ -174,12 +205,12 @@ mod tests {
             let (file, diagnostic) = read_config_file(&path);
             let config = Config::resolve(EnvValues::default(), file);
 
-            assert_eq!(config.usage_style(), UsageStyle::Bar, "contents: {contents}");
             assert_eq!(
-                config.git_cache_ttl_seconds(),
-                2,
+                config.usage_style(),
+                UsageStyle::Bar,
                 "contents: {contents}"
             );
+            assert_eq!(config.git_cache_ttl_seconds(), 2, "contents: {contents}");
             assert_eq!(config.columns(), 100, "contents: {contents}");
 
             let diagnostic = match diagnostic {
