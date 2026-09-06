@@ -13,8 +13,8 @@ unmapped:
 
 Textual rule for "plainly non-executable" (anything else is ambiguous and is
 resolved into set 3, never set 2): blank; `//` comment; `#[..]`/`#![..]`
-attribute; `use`/`mod` items; a line made only of delimiters and optionally
-the `else` keyword (e.g. `}`, `);`, `} else {`).
+attribute; `use`/`mod` items; a line made only of delimiters, `?`, and
+optionally the `else` keyword (e.g. `}`, `);`, `)?;`, `} else {`).
 
 Exit codes: 0 pass, 1 threshold missed, 2 the check itself could not run
 (missing inputs, no changed lines found, unreadable report).
@@ -33,8 +33,12 @@ NON_EXEC = re.compile(
     r"|^\s*//"
     r"|^\s*#!?\["
     r"|^\s*(pub(\([a-z]+\))?\s+)?(use|mod)\s"
-    r"|^[\s\)\]\}\(\[\{;,]*(else)?[\s\{;,]*$"
+    r"|^[\s\)\]\}\(\[\{;,?]*(else)?[\s\{;,?]*$"
 )
+# `?` is in the delimiter class on purpose: a line such as `)?;` that closes a
+# multi-line expression carries only the `?` operator's early-return region,
+# so llvm-cov reports it uncovered whenever the error path was not taken. That
+# error path is therefore NOT gated by this layer; the evidence report says so.
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 SUBJECT_PREFIXES = ("src/", "tests/")
 
