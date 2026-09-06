@@ -13,8 +13,6 @@ pub(crate) enum UsageStyle {
     Dots,
 }
 
-// TODO(config-file): drop this allow once `Config::load` wires these into `main.rs` (batch 3).
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub(crate) struct FileConfig {
@@ -22,8 +20,6 @@ pub(crate) struct FileConfig {
     git_cache_ttl: Option<u64>,
 }
 
-// TODO(config-file): drop this allow once `Config::load` wires these into `main.rs` (batch 3).
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct EnvValues {
     usage_style: Option<String>,
@@ -31,8 +27,6 @@ pub(crate) struct EnvValues {
     columns: Option<String>,
 }
 
-// TODO(config-file): drop this allow once `Config::load` calls this from `main.rs` (batch 3).
-#[allow(dead_code)]
 pub(crate) fn config_file_path(
     xdg_config_home: Option<&OsStr>,
     home: Option<&Path>,
@@ -52,8 +46,6 @@ pub(crate) fn config_file_path(
     })
 }
 
-// TODO(config-file): drop this allow once `Config::load` calls this from `main.rs` (batch 3).
-#[allow(dead_code)]
 pub(crate) fn read_config_file(path: &Path) -> (FileConfig, Option<String>) {
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
@@ -84,8 +76,6 @@ pub(crate) struct Config {
 }
 
 impl Config {
-    // TODO(config-file): drop this allow once `Config::load` calls this from `main.rs` (batch 3).
-    #[allow(dead_code)]
     pub(crate) fn resolve(env: EnvValues, file: FileConfig) -> Self {
         let usage_style = non_empty(env.usage_style).or(file.usage_style);
         let git_cache_ttl =
@@ -99,16 +89,23 @@ impl Config {
         )
     }
 
-    pub(crate) fn from_env() -> Self {
-        let usage_style = std::env::var("STATUSLINE_USAGE_STYLE").ok();
-        let git_cache_ttl = std::env::var("STATUSLINE_GIT_CACHE_TTL").ok();
-        let columns = std::env::var("COLUMNS").ok();
+    /// Reads env vars and the user config file, in that priority order.
+    pub(crate) fn load() -> (Self, Option<String>) {
+        let env = EnvValues {
+            usage_style: std::env::var("STATUSLINE_USAGE_STYLE").ok(),
+            git_cache_ttl: std::env::var("STATUSLINE_GIT_CACHE_TTL").ok(),
+            columns: std::env::var("COLUMNS").ok(),
+        };
+        let path = config_file_path(
+            std::env::var_os("XDG_CONFIG_HOME").as_deref(),
+            crate::cachedir::home_directory().as_deref(),
+        );
+        let (file, diagnostic) = match path {
+            Some(path) => read_config_file(&path),
+            None => (FileConfig::default(), None),
+        };
 
-        Self::from_values(
-            usage_style.as_deref(),
-            git_cache_ttl.as_deref(),
-            columns.as_deref(),
-        )
+        (Self::resolve(env, file), diagnostic)
     }
 
     pub(crate) fn from_values(
@@ -136,8 +133,6 @@ impl Config {
     }
 }
 
-// TODO(config-file): drop this allow once `Config::resolve` is reachable from `main.rs` (batch 3).
-#[allow(dead_code)]
 fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.is_empty())
 }

@@ -12,7 +12,7 @@ pub mod ttl;
 pub mod update;
 pub mod width;
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use cachedir::{CacheDir, Clock, SystemClock};
@@ -186,6 +186,11 @@ impl
     >
 {
     fn system() -> Self {
+        let (config, diagnostic) = Config::load();
+        if let Some(diagnostic) = diagnostic {
+            let _write_result = writeln!(std::io::stderr(), "{diagnostic}");
+        }
+
         let mut app = Self::new(
             CommandGitRunner,
             SystemCredentialStore,
@@ -193,7 +198,7 @@ impl
             CacheDir::from_environment(),
             SystemClock,
             SystemLocalOffset,
-            Config::from_env(),
+            config,
         );
         app.configured_dir = configured_dir_from_environment();
 
