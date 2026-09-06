@@ -81,8 +81,10 @@ layer_changed_line_coverage() {
 }
 layer_mutation() {
   # Mutants restricted to the change set. --jobs 1: one build directory at a
-  # time, so no mutant can test a binary another mutant built.
-  if capture "$artifact_dir/mutation.txt" cargo mutants --in-diff "$artifact_dir/change.diff" --jobs 1 -o "$artifact_dir/mutants" > /dev/null; then rc=0; else rc=$?; fi
+  # time, so no mutant can test a binary another mutant built. --cap-lints:
+  # this crate denies warnings, which would otherwise make every mutant that
+  # leaves a parameter unused "unviable" instead of tested.
+  if capture "$artifact_dir/mutation.txt" cargo mutants --in-diff "$artifact_dir/change.diff" --jobs 1 --cap-lints true -o "$artifact_dir/mutants" > /dev/null; then rc=0; else rc=$?; fi
   tail -n 15 "$artifact_dir/mutation.txt"
   python3 tools/gate/mutants_summary.py "$artifact_dir/mutants/mutants.out" "$rc"
 }
@@ -93,10 +95,11 @@ layer_mutation_kill_sample() {
   python3 tools/gate/mutants_summary.py --sample-functions 2 "$artifact_dir/mutants/mutants.out" 0 > "$artifact_dir/kill-sample-functions.txt" || return $?
   n=0
   while IFS= read -r fn; do
+    fn=$(printf '%s' "$fn" | tr -d '\r')
     [ -z "$fn" ] && continue
     n=$((n + 1))
     printf 'kill sample %s: function %s\n' "$n" "$fn"
-    if capture "$artifact_dir/kill-sample-$n.txt" cargo mutants --in-diff "$artifact_dir/change.diff" --jobs 1 -F "$fn" -o "$artifact_dir/kill-sample-$n" > /dev/null; then rc=0; else rc=$?; fi
+    if capture "$artifact_dir/kill-sample-$n.txt" cargo mutants --in-diff "$artifact_dir/change.diff" --jobs 1 --cap-lints true -F "$fn" -o "$artifact_dir/kill-sample-$n" > /dev/null; then rc=0; else rc=$?; fi
     grep -E 'caught|missed|unviable|timeout' "$artifact_dir/kill-sample-$n.txt" | tail -n 5
     python3 tools/gate/mutants_summary.py "$artifact_dir/kill-sample-$n/mutants.out" "$rc" || return $?
   done < "$artifact_dir/kill-sample-functions.txt"
