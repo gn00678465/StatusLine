@@ -203,8 +203,16 @@ def main() -> int:
     if args.report:
         Path(args.report).write_text(report + "\n", encoding="utf-8")
 
-    if uncovered or unmapped:
-        print("FAIL: changed-line coverage threshold missed (uncovered or unmapped executable lines)")
+    # Assurance boundary: the threshold applies to the subject under test
+    # (src/). cargo-llvm-cov's report excludes integration-test sources under
+    # tests/ by default, so their lines are reported above for the record but
+    # do not decide the layer; the test layer is what exercises them.
+    gated_uncovered = [m for m in misses if not m.startswith("tests/")]
+    gated_unmapped = [m for m in unmapped_lines if not m.startswith("tests/")]
+    if len(gated_uncovered) != len(misses) or len(gated_unmapped) != len(unmapped_lines):
+        print("note: tests/ lines above are informational (outside cargo-llvm-cov's report scope); not gated")
+    if gated_uncovered or gated_unmapped:
+        print("FAIL: changed-line coverage threshold missed under src/ (uncovered or unmapped executable lines)")
         return 1
     if executable == 0:
         print("FAIL: no executable changed lines were instrumented (fail closed)")
