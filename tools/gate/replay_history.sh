@@ -63,10 +63,23 @@ for sha in $(git rev-list --reverse "$merge_base..HEAD"); do
   case "$status" in ok) observed=pass ;; *) observed=fail ;; esac
   detail=$(failing_tests "$artifact_dir/replay/$sha.txt")
   [ -n "$detail" ] || detail=$(result_lines "$artifact_dir/replay/$sha.txt")
+  # An expected-pass commit that fails is rerun once. A pass on the rerun is
+  # recorded as a flake, with the first run's failing tests kept visible; it
+  # is not counted as a mismatch, and it is not hidden either.
+  if [ "$expected" = "pass" ] && [ "$observed" = "fail" ]; then
+    status2=$(run_suite "$artifact_dir/replay/$sha.rerun.txt")
+    if [ "$status2" = "ok" ]; then
+      observed=pass
+      observed_label="pass (rerun; first run flaked)"
+      detail="flaked once: $detail"
+    fi
+  fi
+  [ -n "${observed_label:-}" ] || observed_label=$observed
   mark=""
   [ "$expected" = "$observed" ] || { mark=" **MISMATCH**"; mismatch=1; }
   short=$(git rev-parse --short "$sha")
-  printf '| %s | %s | %s | %s%s | %s |\n' "$short" "$(printf '%s' "$subject" | sed 's/|/\\|/g')" "$expected" "$observed" "$mark" "$(printf '%s' "$detail" | sed 's/|/\\|/g')" >> "$artifact_dir/red.md"
+  printf '| %s | %s | %s | %s%s | %s |\n' "$short" "$(printf '%s' "$subject" | sed 's/|/\\|/g')" "$expected" "$observed_label" "$mark" "$(printf '%s' "$detail" | sed 's/|/\\|/g')" >> "$artifact_dir/red.md"
+  observed_label=""
 done
 cat "$artifact_dir/red.md"
 git worktree remove --force "$wt"

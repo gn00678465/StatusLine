@@ -119,7 +119,25 @@ def main() -> int:
     ap.add_argument("--json", required=True)
     ap.add_argument("--diff-file", help="use this diff text instead of running git (self-test)")
     ap.add_argument("--report", help="write a markdown report here")
+    ap.add_argument(
+        "--allow",
+        help="allowlist of accepted uncovered lines: `path|exact trimmed line text|reason` per line; "
+        "every entry must match exactly one uncovered line or the check fails closed",
+    )
     args = ap.parse_args()
+
+    allow: list[tuple[str, str, str]] = []
+    if args.allow:
+        try:
+            for raw in Path(args.allow).read_text(encoding="utf-8").splitlines():
+                raw = raw.rstrip("\r")
+                if not raw.strip() or raw.startswith("#"):
+                    continue
+                path_, text_, reason_ = raw.split("|", 2)
+                allow.append((norm(path_.strip()), text_.strip(), reason_.strip()))
+        except (OSError, ValueError) as error:
+            print(f"FAIL: cannot read allowlist (fail closed): {error}")
+            return 2
 
     if args.diff_file:
         diff_text = Path(args.diff_file).read_text(encoding="utf-8")
@@ -211,6 +229,28 @@ def main() -> int:
     gated_unmapped = [m for m in unmapped_lines if not m.startswith("tests/")]
     if len(gated_uncovered) != len(misses) or len(gated_unmapped) != len(unmapped_lines):
         print("note: tests/ lines above are informational (outside cargo-llvm-cov's report scope); not gated")
+
+    # Accepted uncovered lines: each allow entry must match exactly one
+    # currently-uncovered line by file and exact trimmed text. An entry that
+    # matches nothing is stale and fails the check (rc 2) so an allowlist can
+    # never silently outlive the line it excused. Accepted lines are printed
+    # so the evidence report can quote them with their reasons.
+    accepted: list[str] = []
+    for path_, text_, reason_ in allow:
+        key = f"{path_}:"
+        hits_ = [m for m in gated_uncovered if m.startswith(key) and m.split(": ", 1)[1] == text_]
+        if len(hits_) != 1:
+            print(f"FAIL: allowlist entry matches {len(hits_)} uncovered lines (expected exactly 1): {path_} | {text_}")
+            return 2
+        gated_uncovered.remove(hits_[0])
+        accepted.append(f"{hits_[0]} — accepted: {reason_}")
+    if accepted:
+        print("Accepted uncovered lines (allowlist):")
+        for a in accepted:
+            print(f"- {a}")
+        if args.report:
+            with Path(args.report).open("a", encoding="utf-8") as fh:
+                fh.write("Accepted uncovered lines (allowlist):\n" + "\n".join(f"- {a}" for a in accepted) + "\n")
     if gated_uncovered or gated_unmapped:
         print("FAIL: changed-line coverage threshold missed under src/ (uncovered or unmapped executable lines)")
         return 1

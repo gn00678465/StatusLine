@@ -69,6 +69,8 @@ v3 新增（資源上限）：
 16. `oversized_config_file_yields_defaults_with_diagnostic`（單元）：16385 bytes 的檔案（`usage_style = "dots"` 後以註解填滿）→ 全預設、diagnostic `Some` 且含路徑；16384 bytes 的同構檔案 → `Dots`、diagnostic `None`。
 17. `deeply_nested_config_file_does_not_crash`（整合，真實 binary）：檔案內容 `x = ` 後接 4000 層 `[`／`]`（約 8 KB，合法 TOML、未知鍵）→ exit 0；stdout 含 `Fable 5` 與 `▓`／`░`；stderr 為空。
 18. `renders_with_defaults_when_no_home_directory_exists`（整合，真實 binary；S11「兩者皆無」的真實執行對應）：移除 `HOME`／`USERPROFILE`／`XDG_CONFIG_HOME` → exit 0；stdout 含 `Fable 5` 與 `▓`／`░`；stderr 為空。
+19. `non_utf8_config_file_yields_defaults_with_diagnostic`（單元；Must NOT 第 3 條「非 UTF-8」的具名對應）：檔案內容為位元組 `0xFF 0xFE 0xFD` → 全預設、diagnostic `Some` 且含路徑。
+20. `oversized_config_file_yields_defaults_with_diagnostic` 補一組邊界案例（S16 延伸）：16384 個 `#` 後接多位元組字元「中」（共 16387 bytes）→ diagnostic 含 `16384`（大小檢查先於 UTF-8 解碼）。
 
 ## Must NOT
 
@@ -107,6 +109,8 @@ Append-only。每個核准版本一筆：逐字引用核准語句、日期、綁
 ## Revisions
 
 Append-only。
+
+- 2026-09-06 — v3 編輯性補充（不改版、不改核准）：code review 第 2 輪（codex-astra）F1–F4 closed；新 finding：大小檢查在 UTF-8 解碼之後，截斷多位元組字元時 diagnostic 誤報編碼錯誤而非上限（行為仍安全），修正為先以位元組檢查大小；gate coverage 指出非 UTF-8 讀取錯誤分支無具名測試。補 Scenario 19、20 作為既有 Must NOT 第 3 條與「資源上限」決定的具名測試對應，不新增行為。解析 thread 的 spawn 失敗與 panic 兩個防禦分支無法在不 mock 受測單元的前提下觸發，列入 `tools/gate/coverage-allow.txt` 並在 evidence 逐字列出理由。
 
 - 2026-09-06 — v3（revised-pending-approval）：獨立 code review（codex-astra）finding F1 指出設定檔無大小與巢狀深度上限；實測重現 `basic-toml` 於 1 MiB 主執行緒在深度 2500 溢位中止、stdout 為空（違反 Must NOT 第 3 條）。新增設計決定「資源上限」（16 KiB 讀取上限＋16 MiB 專用解析 thread）與 Scenario 16、17；gate 的 changed-line coverage 指出 `Config::load` 的「無家目錄」分支未被真實執行覆蓋，補 Scenario 18（S11 的真實 binary 對應，不新增行為）。其餘 review finding（F2 整合測試 PATH 隔離、F3／F4 S6／S7 測試未經 TOML 解析、F5 README 措辭）為既有 spec 條文的遵循性修正，不改版。v2 的核准不涵蓋本版；待重新核准。
 

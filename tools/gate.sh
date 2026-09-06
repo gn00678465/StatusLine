@@ -77,7 +77,7 @@ layer_changed_line_coverage() {
   capture "$artifact_dir/llvm-cov-run.txt" cargo llvm-cov --all-targets --no-report > /dev/null || { cat "$artifact_dir/llvm-cov-run.txt"; return 1; }
   cargo llvm-cov report --lcov --output-path "$artifact_dir/coverage.lcov" || return $?
   cargo llvm-cov report --json --output-path "$artifact_dir/coverage.json" || return $?
-  python3 tools/gate/changed_lines.py --base "$base" --lcov "$artifact_dir/coverage.lcov" --json "$artifact_dir/coverage.json" --report "$artifact_dir/changed-lines.md"
+  python3 tools/gate/changed_lines.py --base "$base" --lcov "$artifact_dir/coverage.lcov" --json "$artifact_dir/coverage.json" --report "$artifact_dir/changed-lines.md" --allow tools/gate/coverage-allow.txt
 }
 layer_mutation() {
   # Mutants restricted to the change set. --jobs 1: one build directory at a

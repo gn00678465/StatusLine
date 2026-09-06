@@ -77,6 +77,13 @@ expect_rc 1 "changed_lines: zero-hit changed line fails" $cl "$tmp/diff.txt" --l
 expect_rc 1 "changed_lines: in-span line without DA fails as unmapped" $cl "$tmp/diff.txt" --lcov "$tmp/cov-unmapped.lcov"
 expect_rc 2 "changed_lines: empty diff is rc 2 (inspected nothing)" $cl "$tmp/empty-diff.txt" --lcov "$tmp/cov-good.lcov"
 expect_rc 2 "changed_lines: unreadable LCOV is rc 2" $cl "$tmp/diff.txt" --lcov "$tmp/absent.lcov"
+# allowlist: an entry matching the zero-hit line turns the miss into an
+# accepted line (pass); an entry matching nothing is stale and is rc 2.
+body_text=$(sed -n "${body}p" "$src" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+printf '%s|%s|selftest control\n' "$src" "$body_text" > "$tmp/allow-match.txt"
+printf '%s|this line does not exist anywhere|stale\n' "$src" > "$tmp/allow-stale.txt"
+expect_rc 0 "changed_lines: allowlisted uncovered line is accepted" $cl "$tmp/diff.txt" --lcov "$tmp/cov-zero.lcov" --allow "$tmp/allow-match.txt"
+expect_rc 2 "changed_lines: stale allowlist entry is rc 2" $cl "$tmp/diff.txt" --lcov "$tmp/cov-good.lcov" --allow "$tmp/allow-stale.txt"
 
 # --- unchanged_tests.py ------------------------------------------------------
 git show HEAD:src/main.rs | sed 's/assert_eq!(app.render_input(""), "Claude");/assert_eq!(app.render_input(""), "Claud");/' > "$tmp/main-mutated.rs"
