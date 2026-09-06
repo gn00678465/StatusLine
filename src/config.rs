@@ -353,16 +353,20 @@ mod tests {
     }
 
     #[test]
-    fn unknown_file_keys_are_ignored() {
-        let file = FileConfig {
-            usage_style: Some("dots".to_owned()),
-            ..FileConfig::default()
-        };
+    fn unknown_file_keys_are_ignored() -> Result<(), Box<dyn Error>> {
+        let dir = tempdir()?;
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "future_key = true\nusage_style = \"dots\"\n")?;
+
+        let (file, diagnostic) = read_config_file(&path);
 
         assert_eq!(
             Config::resolve(EnvValues::default(), file).usage_style(),
             UsageStyle::Dots
         );
+        assert_eq!(diagnostic, None);
+
+        Ok(())
     }
 
     #[test]
