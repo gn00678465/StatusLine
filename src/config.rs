@@ -263,6 +263,27 @@ mod tests {
     }
 
     #[test]
+    fn non_utf8_config_file_yields_defaults_with_diagnostic() -> Result<(), Box<dyn Error>> {
+        let dir = tempdir()?;
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, [0xFFu8, 0xFE, 0xFD])?;
+
+        let (file, diagnostic) = read_config_file(&path);
+        let config = Config::resolve(EnvValues::default(), file);
+
+        assert_eq!(config.usage_style(), UsageStyle::Bar);
+        assert_eq!(config.git_cache_ttl_seconds(), 2);
+        assert_eq!(config.columns(), 100);
+        let diagnostic = diagnostic.ok_or("expected a diagnostic for non-UTF-8 content")?;
+        assert!(
+            diagnostic.contains(&path.display().to_string()),
+            "diagnostic {diagnostic:?} should mention the path"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn unreadable_config_path_yields_defaults_with_diagnostic() -> Result<(), Box<dyn Error>> {
         let dir = tempdir()?;
         let path = dir.path().join("config.toml");
