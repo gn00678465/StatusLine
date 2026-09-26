@@ -8,7 +8,7 @@ pub mod theme;
 
 use crate::gitstatus::GitStatus;
 use crate::ttl::CacheTtlStatus;
-use crate::width::wrap_status_line;
+use crate::width::display_width;
 
 use self::blocks::{render_cache, render_context, render_model, render_workspace, ContextUsage};
 use self::color::{DIM, RESET};
@@ -23,7 +23,8 @@ pub struct RenderContext<'a> {
     pub cache_status: CacheTtlStatus,
     pub limits: &'a str,
     pub theme: &'a Theme,
-    pub columns: usize,
+    /// Columns left after Claude Code's margins and `padding`.
+    pub width: usize,
 }
 
 pub fn render(context: RenderContext<'_>) -> String {
@@ -42,26 +43,32 @@ pub fn render(context: RenderContext<'_>) -> String {
         usage_blocks.push(cache_block);
     }
 
+    let usage_block = usage_blocks.join(&separator);
+    let limits = context.limits;
     if theme.layout == Layout::Stacked {
-        let usage_block = usage_blocks.join(&separator);
-        return format!(
-            "{header}\n{DIM}├─{RESET} {usage_block}\n{DIM}└─{RESET} {}",
-            context.limits
-        );
+        return stacked(&header, &usage_block, limits);
     }
 
-    let mut detail_blocks = usage_blocks;
-    if !context.limits.is_empty() {
-        detail_blocks.push(context.limits.to_owned());
-    }
-    let detail_block = detail_blocks.join(&separator);
-    let wrapped = wrap_status_line(&header, &detail_block, context.columns);
-
-    if wrapped.contains('\n') {
-        format!("{header}\n{DIM}└─{RESET} {detail_block}")
+    let detail_block = if limits.is_empty() {
+        usage_block.clone()
     } else {
-        format!("{header} {DIM}│{RESET} {detail_block}")
+        format!("{usage_block}{separator}{limits}")
+    };
+    let one_line = format!("{header} {DIM}│{RESET} {detail_block}");
+    if display_width(&one_line) <= context.width {
+        return one_line;
     }
+    let detail_line = format!("{DIM}└─{RESET} {detail_block}");
+    // Without limits a third line would only split off an empty `└─`.
+    if display_width(&detail_line) <= context.width || limits.is_empty() {
+        return format!("{header}\n{detail_line}");
+    }
+
+    stacked(&header, &usage_block, limits)
+}
+
+fn stacked(header: &str, usage_block: &str, limits: &str) -> String {
+    format!("{header}\n{DIM}├─{RESET} {usage_block}\n{DIM}└─{RESET} {limits}")
 }
 
 #[cfg(test)]
@@ -107,7 +114,7 @@ mod tests {
             },
             limits: "",
             theme: &Theme::new(MeterStyle::Bar),
-            columns: 100,
+            width: 100,
         });
 
         let plain = strip_ansi(&rendered);
@@ -141,7 +148,7 @@ mod tests {
             },
             limits: "",
             theme: &Theme::new(MeterStyle::Dots),
-            columns: 100,
+            width: 100,
         });
 
         let plain = strip_ansi(&rendered);
@@ -169,7 +176,7 @@ mod tests {
             },
             limits: "",
             theme: &Theme::new(MeterStyle::Dots),
-            columns: 1,
+            width: 1,
         });
 
         assert_eq!(
@@ -199,7 +206,7 @@ mod tests {
             },
             limits: "📊 5h: - · 7d: -",
             theme: &Theme::new(MeterStyle::Bar),
-            columns: 100,
+            width: 100,
         });
 
         assert_eq!(
@@ -240,7 +247,7 @@ mod tests {
             },
             limits: "📊 5h: - · 7d: -",
             theme: &theme,
-            columns: 1_000,
+            width: 1_000,
         });
 
         assert_eq!(
@@ -252,5 +259,61 @@ mod tests {
                 && rendered.contains("\n\u{1b}[2m└─\u{1b}[0m 📊"),
             "{rendered:?}"
         );
+    }
+
+    fn render_haiku_with_limits(layout: Layout, width: usize) -> String {
+        let git_status = GitStatus::default();
+        let theme = Theme {
+            layout,
+            ..Theme::new(MeterStyle::Bar)
+        };
+
+        render(RenderContext {
+            cwd: None,
+            git_status: &git_status,
+            model_name: "Haiku",
+            effort_level: None,
+            context_usage: ContextUsage {
+                input_tokens: 0,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                context_window_size: 200_000,
+                official_percentage: None,
+            },
+            cache_status: CacheTtlStatus {
+                hit_rate: None,
+                ttl: None,
+            },
+            limits: "📊 5h: - · 7d: -",
+            theme: &theme,
+            width,
+        })
+    }
+
+    #[test]
+    fn auto_keeps_an_exact_fit_on_one_line_and_wraps_one_column_short() {
+        assert_eq!(
+            strip_ansi(&render_haiku_with_limits(Layout::Auto, 55)),
+            "🤖 Haiku │ ⚡️ 0/200k (░░░░░░░░░░ 0%) · 📊 5h: - · 7d: -"
+        );
+        assert_eq!(
+            strip_ansi(&render_haiku_with_limits(Layout::Auto, 54)),
+            "🤖 Haiku\n└─ ⚡️ 0/200k (░░░░░░░░░░ 0%) · 📊 5h: - · 7d: -"
+        );
+    }
+
+    #[test]
+    fn auto_keeps_an_exact_fit_detail_line_and_stacks_one_column_short() {
+        assert_eq!(
+            strip_ansi(&render_haiku_with_limits(Layout::Auto, 47)),
+            "🤖 Haiku\n└─ ⚡️ 0/200k (░░░░░░░░░░ 0%) · 📊 5h: - · 7d: -"
+        );
+
+        let stacked = render_haiku_with_limits(Layout::Auto, 46);
+        assert_eq!(
+            strip_ansi(&stacked),
+            "🤖 Haiku\n├─ ⚡️ 0/200k (░░░░░░░░░░ 0%)\n└─ 📊 5h: - · 7d: -"
+        );
+        assert_eq!(stacked, render_haiku_with_limits(Layout::Stacked, 46));
     }
 }

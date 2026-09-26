@@ -2,9 +2,6 @@
 
 use unicode_width::UnicodeWidthChar;
 
-const MAIN_SEPARATOR: &str = " │ ";
-const WRAP_PREFIX: &str = "└─ ";
-
 pub fn strip_ansi(input: &str) -> String {
     let mut stripped = String::with_capacity(input.len());
     let mut characters = input.chars();
@@ -31,19 +28,6 @@ pub fn display_width(input: &str) -> usize {
     strip_ansi(input).chars().map(character_display_width).sum()
 }
 
-pub fn wrap_status_line(out: &str, limit: &str, columns: usize) -> String {
-    if limit.is_empty() {
-        return out.to_owned();
-    }
-
-    let inline = format!("{out}{MAIN_SEPARATOR}{limit}");
-    if display_width(&inline) > columns {
-        format!("{out}\n{WRAP_PREFIX}{limit}")
-    } else {
-        inline
-    }
-}
-
 fn character_display_width(character: char) -> usize {
     if is_zero_width(character) {
         0
@@ -67,7 +51,7 @@ fn is_zero_width(character: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_width, strip_ansi, wrap_status_line};
+    use super::{display_width, strip_ansi};
 
     #[test]
     fn strips_csi_ansi_sequences() {
@@ -115,14 +99,5 @@ mod tests {
         let colored = "\u{1b}[38;2;255;170;80mRust 中文 ⚡️\u{1b}[0m";
 
         assert_eq!(display_width(colored), 12);
-    }
-
-    #[test]
-    fn keeps_an_exact_fit_on_one_line_and_wraps_one_column_short() {
-        let out = "📁 repo";
-        let limit = "⚡️ 50k/200k";
-
-        assert_eq!(wrap_status_line(out, limit, 21), "📁 repo │ ⚡️ 50k/200k");
-        assert_eq!(wrap_status_line(out, limit, 20), "📁 repo\n└─ ⚡️ 50k/200k");
     }
 }

@@ -11,9 +11,13 @@
 
 - 設定檔新增外觀設定，全部只能在設定檔中設定，不新增環境變數：
   - `layout = "stacked"` 永遠輸出三行：第一行是資料夾、分支與模型，
-    `├─` 行是 context 與 cache，`└─` 行是 limits。預設 `auto` 保留原本依
-    `COLUMNS` 換行的行為。約 60 欄的窄 pane 需再搭配 `width = 5` 與
-    `show_reset = false`，limits 行才不會被截斷（見 README）。
+    `├─` 行是 context 與 cache，`└─` 行是 limits。預設 `auto` 依可用寬度
+    使用最少的行數，最多三行：整行放得下時輸出一行；context、cache 與
+    limits 放得下一條 `└─` 行時輸出兩行；其餘情況輸出與 `stacked` 相同的
+    三行。沒有 limits 區塊時，`auto` 最多輸出兩行。
+  - `padding`（0–20，預設 0）：必須與 Claude Code 的 `statusLine.padding`
+    相同。可用寬度為 `COLUMNS - 4 - 2 × padding`；Claude Code 的 `COLUMNS`
+    是目前 pane 的寬度，超出可用寬度的行會被截斷並以 `…` 結尾。
   - `[meter]`：`width`（1–20，預設 10）、`filled`／`empty` 字元（預設依
     `usage_style`）、`show_percentage`、`show_reset`（隱藏 limits 區塊的
     `@14:00` 重置時間）。
@@ -21,14 +25,17 @@
     meter 的四段顏色 `levels` 與門檻 `thresholds`（預設 `[50, 70, 90]`）。
     未設定 `levels` 時保留 bar 與 dots 原本的顏色順序，`extra` 區塊使用 bar
     的顏色順序。
-- 新的鍵在解析時驗證。顏色不是 `#RRGGBB`、`width` 超出 1–20、glyph 是空字
-  串或含控制字元、`thresholds` 沒有嚴格遞增或大於 100 時，整份設定檔忽略並
-  於 stderr 印出一行提示，與其他格式錯誤相同。
+- 新的鍵在解析時驗證。`padding` 超出 0–20、顏色不是 `#RRGGBB`、`width`
+  超出 1–20、glyph 是空字串或含控制字元、`thresholds` 沒有嚴格遞增或大於
+  100 時，整份設定檔忽略並於 stderr 印出一行提示，與其他格式錯誤相同。
 
 ### Notes
 
-- 沒有設定檔，或設定檔只有 `usage_style`／`git_cache_ttl` 時，輸出與
-  v2.1.0 完全相同。
+- 沒有設定檔，或設定檔只有 `usage_style`／`git_cache_ttl` 時，外觀與
+  v2.1.0 相同，只有換行位置不同（見下一項）。
+- `auto` 現在會扣除 Claude Code 的邊界欄位（左右各 2 欄，再加上左右各
+  `padding` 欄）。接近右緣的行會比 v2.1.0 更早換行；`└─` 行也放不下時，
+  改為輸出三行。
 
 ## [v2.1.0] - 2026-09-06
 

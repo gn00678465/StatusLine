@@ -4,7 +4,7 @@ Status: ready-for-agent
 
 ## Why
 
-The limits block (`5h · 7d · <weekly scope>`) sits at the end of the detail line. In a narrow or split pane Claude Code truncates it, and the binary cannot see the real pane width (`COLUMNS` is usually unset, default 100). Users also want to tune meter appearance and colors. All new knobs live only in the config file; no new env vars.
+The limits block (`5h · 7d · <weekly scope>`) sits at the end of the detail line. In a narrow or split pane Claude Code truncates it. Users also want to tune meter appearance and colors. All new knobs live only in the config file; no new env vars.
 
 ## Config file schema (additions)
 
@@ -84,3 +84,33 @@ Line 2 holds context and cache; line 3 holds limits. The prefixes are `├─ ` 
 - Unit tests per knob against literal expected strings.
 - Integration test in `tests/cc_statusline.rs` running the real binary with a config file setting `layout = "stacked"` plus a meter and color override.
 - README "Config file" section and CHANGELOG `[Unreleased]` document the new keys.
+
+## Revision 2: width-aware `auto` (measured 2026-09-26)
+
+### Measured facts
+
+Probe script installed as `statusLine.command` in an Orca split pane, output read back with `orca terminal read`:
+
+- Claude Code sets `COLUMNS` to the real pane width on every status-line run, and it follows resizes (78, then 94 after a resize; both equal `stty size` of the pane tty). stdin JSON carries no width or padding field. `/dev/tty` is not available.
+- Claude Code reserves 2 columns on each side plus `statusLine.padding` on each side. Usable width = `COLUMNS - 4 - 2 * padding` (94 cols, padding 2 → 86 fits, 87 is cut; padding 0 → 90 fits, 91 is cut).
+- A line wider than that is cut at the end and its last visible cell becomes `…`.
+
+Revision 1's premise ("the binary cannot see the pane width") was wrong; the README and CHANGELOG text built on it is replaced.
+
+### Config
+
+```toml
+padding = 2   # top-level; must equal statusLine.padding in Claude Code settings; 0..=20, default 0
+```
+
+Invalid (`> 20`, negative, wrong type) follows the existing whole-file-ignore path.
+
+### `auto` layout (max 3 lines, user decision)
+
+`budget = COLUMNS.saturating_sub(4 + 2 * padding)`, computed once. With `inline = header + " │ " + detail` and `detail = context · cache · limits`:
+
+1. `width(inline) <= budget` → 1 line (unchanged shape).
+2. else `3 + width(detail) <= budget` → 2 lines: `header` / `└─ detail` (unchanged shape).
+3. else 3 lines, identical to `stacked`: `header` / `├─ context · cache` / `└─ limits`.
+
+Blocks never move further down; a line that still overflows is left for Claude Code to cut. `stacked` is unchanged. `width.rs::wrap_status_line` goes away if nothing else uses it.

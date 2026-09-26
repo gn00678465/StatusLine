@@ -13,6 +13,10 @@ use crate::render::theme::{Layout, MeterTheme, Palette, Rgb, Theme, MAX_METER_WI
 
 const DEFAULT_GIT_CACHE_TTL_SECONDS: u64 = 2;
 const DEFAULT_COLUMNS: usize = 100;
+/// Measured in Claude Code: it keeps 2 columns free on each side of the
+/// status line, plus `statusLine.padding` on each side.
+const CLAUDE_CODE_MARGIN_COLUMNS: usize = 4;
+const MAX_PADDING: u8 = 20;
 /// A 1 MiB main-thread stack overflows parsing `basic-toml` around nesting
 /// depth 2500 (~5 KB file); this cap keeps every read far below that.
 const MAX_CONFIG_FILE_BYTES: usize = 16_384;
@@ -28,6 +32,8 @@ const PARSER_STACK_SIZE_BYTES: usize = 16 << 20;
 pub(crate) struct FileConfig {
     usage_style: Option<String>,
     git_cache_ttl: Option<u64>,
+    #[serde(deserialize_with = "padding")]
+    padding: u8,
     layout: Layout,
     meter: FileMeter,
     colors: FileColors,
@@ -56,6 +62,17 @@ struct FileColors {
     levels: Option<[Rgb; 4]>,
     #[serde(deserialize_with = "thresholds")]
     thresholds: Option<[u8; 3]>,
+}
+
+fn padding<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u8, D::Error> {
+    let padding = u8::deserialize(deserializer)?;
+    if padding <= MAX_PADDING {
+        Ok(padding)
+    } else {
+        Err(D::Error::custom(format!(
+            "padding {padding} is outside 0..={MAX_PADDING}"
+        )))
+    }
 }
 
 fn meter_width<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<usize>, D::Error> {
@@ -178,7 +195,8 @@ fn diagnostic(path: &Path, error: &dyn std::fmt::Display) -> String {
 pub(crate) struct Config {
     theme: Theme,
     git_cache_ttl_seconds: u64,
-    columns: usize,
+    /// Columns Claude Code shows before it cuts the line with `…`.
+    width: usize,
 }
 
 impl Config {
@@ -191,6 +209,7 @@ impl Config {
             usage_style.as_deref(),
             git_cache_ttl.as_deref(),
             columns.as_deref(),
+            file.padding,
         );
 
         Self {
@@ -222,11 +241,14 @@ impl Config {
         usage_style: Option<&str>,
         git_cache_ttl: Option<&str>,
         columns: Option<&str>,
+        padding: u8,
     ) -> Self {
+        let margin = CLAUDE_CODE_MARGIN_COLUMNS + 2 * usize::from(padding);
+
         Self {
             theme: Theme::new(parse_usage_style(usage_style)),
             git_cache_ttl_seconds: parse_git_cache_ttl(git_cache_ttl),
-            columns: parse_columns(columns),
+            width: parse_columns(columns).saturating_sub(margin),
         }
     }
 
@@ -238,8 +260,8 @@ impl Config {
         self.git_cache_ttl_seconds
     }
 
-    pub(crate) fn columns(&self) -> usize {
-        self.columns
+    pub(crate) fn width(&self) -> usize {
+        self.width
     }
 }
 
@@ -314,7 +336,7 @@ mod tests {
 
         assert_eq!(config.theme().meter.style, MeterStyle::Bar);
         assert_eq!(config.git_cache_ttl_seconds(), 2);
-        assert_eq!(config.columns(), 100);
+        assert_eq!(config.width(), 96);
         assert_eq!(diagnostic, None);
 
         Ok(())
@@ -343,7 +365,7 @@ mod tests {
                 "contents: {contents}"
             );
             assert_eq!(config.git_cache_ttl_seconds(), 2, "contents: {contents}");
-            assert_eq!(config.columns(), 100, "contents: {contents}");
+            assert_eq!(config.width(), 96, "contents: {contents}");
 
             let diagnostic = diagnostic
                 .ok_or_else(|| format!("expected a diagnostic for contents: {contents}"))?;
@@ -367,7 +389,7 @@ mod tests {
 
         assert_eq!(config.theme().meter.style, MeterStyle::Bar);
         assert_eq!(config.git_cache_ttl_seconds(), 2);
-        assert_eq!(config.columns(), 100);
+        assert_eq!(config.width(), 96);
         let diagnostic = diagnostic.ok_or("expected a diagnostic for non-UTF-8 content")?;
         assert!(
             diagnostic.contains(&path.display().to_string()),
@@ -388,7 +410,7 @@ mod tests {
 
         assert_eq!(config.theme().meter.style, MeterStyle::Bar);
         assert_eq!(config.git_cache_ttl_seconds(), 2);
-        assert_eq!(config.columns(), 100);
+        assert_eq!(config.width(), 96);
         assert!(diagnostic.is_some());
 
         Ok(())
@@ -606,7 +628,7 @@ mod tests {
         let (file, _diagnostic) = read_config_file(&path);
         let config = Config::resolve(EnvValues::default(), file);
 
-        assert_eq!(config.columns(), 100);
+        assert_eq!(config.width(), 96);
 
         Ok(())
     }
@@ -625,7 +647,7 @@ mod tests {
         );
         assert_eq!(configured.theme().meter.style, MeterStyle::Dots);
         assert_eq!(configured.git_cache_ttl_seconds(), 60);
-        assert_eq!(configured.columns(), 250);
+        assert_eq!(configured.width(), 246);
 
         let fallback = Config::resolve(
             EnvValues {
@@ -637,7 +659,7 @@ mod tests {
         );
         assert_eq!(fallback.theme().meter.style, MeterStyle::Bar);
         assert_eq!(fallback.git_cache_ttl_seconds(), 2);
-        assert_eq!(fallback.columns(), 100);
+        assert_eq!(fallback.width(), 96);
 
         let negative_ttl = Config::resolve(
             EnvValues {
@@ -648,33 +670,59 @@ mod tests {
             file.clone(),
         );
         assert_eq!(negative_ttl.git_cache_ttl_seconds(), 2);
-        assert_eq!(negative_ttl.columns(), 100);
+        assert_eq!(negative_ttl.width(), 96);
 
         let missing_columns = Config::resolve(EnvValues::default(), file);
-        assert_eq!(missing_columns.columns(), 100);
+        assert_eq!(missing_columns.width(), 96);
     }
 
     #[test]
     fn parses_usage_style_ttl_and_columns_with_clamps_and_fallbacks() {
-        let configured = Config::from_values(Some("dots"), Some("99"), Some("250"));
+        let configured = Config::from_values(Some("dots"), Some("99"), Some("250"), 0);
 
         assert_eq!(configured.theme().meter.style, MeterStyle::Dots);
         assert_eq!(configured.git_cache_ttl_seconds(), 60);
-        assert_eq!(configured.columns(), 250);
+        assert_eq!(configured.width(), 246);
 
-        let fallback = Config::from_values(Some("invalid"), Some("not-a-number"), Some("0"));
+        let fallback = Config::from_values(Some("invalid"), Some("not-a-number"), Some("0"), 0);
 
         assert_eq!(fallback.theme().meter.style, MeterStyle::Bar);
         assert_eq!(fallback.git_cache_ttl_seconds(), 2);
-        assert_eq!(fallback.columns(), 100);
+        assert_eq!(fallback.width(), 96);
 
-        let negative_ttl = Config::from_values(None, Some("-1"), Some("not-a-number"));
+        let negative_ttl = Config::from_values(None, Some("-1"), Some("not-a-number"), 0);
 
         assert_eq!(negative_ttl.git_cache_ttl_seconds(), 2);
-        assert_eq!(negative_ttl.columns(), 100);
+        assert_eq!(negative_ttl.width(), 96);
 
-        let missing_columns = Config::from_values(None, None, None);
-        assert_eq!(missing_columns.columns(), 100);
+        let missing_columns = Config::from_values(None, None, None, 0);
+        assert_eq!(missing_columns.width(), 96);
+    }
+
+    #[test]
+    fn padding_reduces_the_usable_width_by_two_columns_per_unit() -> Result<(), Box<dyn Error>> {
+        let dir = tempdir()?;
+        let path = dir.path().join("config.toml");
+        let width_with = |padding: &str, columns: &str| -> Result<usize, Box<dyn Error>> {
+            std::fs::write(&path, padding)?;
+            let (file, diagnostic) = read_config_file(&path);
+            assert_eq!(diagnostic, None, "contents: {padding}");
+            let env = EnvValues {
+                columns: Some(columns.to_owned()),
+                ..EnvValues::default()
+            };
+
+            Ok(Config::resolve(env, file).width())
+        };
+
+        assert_eq!(width_with("", "94")?, 90);
+        assert_eq!(width_with("padding = 0", "94")?, 90);
+        assert_eq!(width_with("padding = 1", "94")?, 88);
+        assert_eq!(width_with("padding = 2", "94")?, 86);
+        assert_eq!(width_with("padding = 20", "94")?, 50);
+        assert_eq!(width_with("padding = 20", "40")?, 0);
+
+        Ok(())
     }
 
     #[test]
@@ -766,6 +814,9 @@ thresholds = [0, 1, 100]
     #[test]
     fn invalid_theme_keys_ignore_the_whole_file_with_a_diagnostic() -> Result<(), Box<dyn Error>> {
         let invalid_contents = [
+            "padding = 21",
+            "padding = -1",
+            "padding = \"2\"",
             "layout = \"wide\"",
             "[meter]\nwidth = 0",
             "[meter]\nwidth = 21",

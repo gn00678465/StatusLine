@@ -118,6 +118,30 @@ fn renders_stacked_layout_with_meter_and_color_overrides_from_config_file(
 }
 
 #[test]
+fn auto_layout_stacks_when_padding_leaves_the_detail_line_one_column_short(
+) -> Result<(), Box<dyn Error>> {
+    let (mut command, home, _claude_config_dir) = isolated_command()?;
+    write_config_file(&home, "padding = 2\n[meter]\nshow_reset = false\n")?;
+    // 100 - 4 - 2 * 2 = 92 columns; the `└─` detail line needs 93.
+    command.env("COLUMNS", "100");
+
+    let (status, stdout, stderr) = run_with_fixture(command)?;
+
+    assert!(status.success());
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        [
+            "📁 \u{1b}[38;2;100;220;255mmock-project\u{1b}[0m \u{1b}[2m│\u{1b}[0m 🤖 \u{1b}[38;2;80;180;255mFable 5\u{1b}[0m",
+            "\u{1b}[2m├─\u{1b}[0m ⚡️ \u{1b}[38;2;240;240;240m50k\u{1b}[0m\u{1b}[2m/200k\u{1b}[0m \u{1b}[2m(\u{1b}[38;2;100;255;100m▓▓░░░░░░░░ 25%\u{1b}[0m\u{1b}[2m)\u{1b}[0m \u{1b}[2m·\u{1b}[0m \u{1b}[2mCache \u{1b}[0m\u{1b}[38;2;140;140;140m0%\u{1b}[0m \u{1b}[38;2;100;255;100m60:00\u{1b}[0m",
+            "\u{1b}[2m└─\u{1b}[0m 📊 \u{1b}[2m5h: \u{1b}[0m\u{1b}[38;2;100;255;100m▓▓░░░░░░░░ 20%\u{1b}[0m \u{1b}[2m·\u{1b}[0m \u{1b}[2m7d: \u{1b}[0m\u{1b}[38;2;255;230;80m▓▓▓▓▓░░░░░ 50%\u{1b}[0m",
+        ]
+    );
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+
+    Ok(())
+}
+
+#[test]
 fn renders_status_line_and_warns_on_malformed_config_file() -> Result<(), Box<dyn Error>> {
     let (command, home, _claude_config_dir) = isolated_command()?;
     write_config_file(&home, "usage_style = 1\n")?;

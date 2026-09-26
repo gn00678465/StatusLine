@@ -146,7 +146,7 @@ where
             cache_status,
             limits: &limits,
             theme: self.config.theme(),
-            columns: self.config.columns(),
+            width: self.config.width(),
         });
         let update_line = UpdateChecker::new(
             self.http.clone(),
@@ -336,7 +336,7 @@ mod tests {
             CacheDir::from_paths(None, Some(home)),
             FixedClock,
             UtcOffset,
-            Config::from_values(Some("bar"), Some("2"), Some(columns)),
+            Config::from_values(Some("bar"), Some("2"), Some(columns), 0),
         )
     }
 
@@ -437,7 +437,8 @@ mod tests {
 📁 mock-project › 🌿 integration [S1|W1] │ 🤖 Fable 5 · 🧠 med │ ⚡️ 50k/200k (▓▓░░░░░░░░ 25%) · Cache 0% 60:00 · 📊 5h: ▓▓░░░░░░░░ 20% @17:46 · 7d: ▓▓▓▓▓░░░░░ 50% @Mar 24, 17:46 · Other: ▓▓▓▓▓▓▓▓▓░ 99% @Mar 24, 17:46 · Fable: ▓▓▓░░░░░░░ 30% @Mar 24, 17:46
 --- wrapped
 📁 mock-project › 🌿 integration [S1|W1] │ 🤖 Claude Enterprise Extremely Long Model Name · 🧠 xhigh
-└─ ⚡️ 600k/1.0m (▓▓▓▓▓▓░░░░ 60%) · Cache 17% 60:00 · 📊 5h: ▓▓░░░░░░░░ 20% @17:46 · 7d: ▓▓▓▓▓░░░░░ 50% @Mar 24, 17:46 · Other: ▓▓▓▓▓▓▓▓▓░ 99% @Mar 24, 17:46 · Fable: ▓▓▓░░░░░░░ 30% @Mar 24, 17:46
+├─ ⚡️ 600k/1.0m (▓▓▓▓▓▓░░░░ 60%) · Cache 17% 60:00
+└─ 📊 5h: ▓▓░░░░░░░░ 20% @17:46 · 7d: ▓▓▓▓▓░░░░░ 50% @Mar 24, 17:46 · Other: ▓▓▓▓▓▓▓▓▓░ 99% @Mar 24, 17:46 · Fable: ▓▓▓░░░░░░░ 30% @Mar 24, 17:46
 "###);
 
         Ok(())
@@ -452,7 +453,7 @@ mod tests {
             CacheDir::Unsafe,
             FixedClock,
             UtcOffset,
-            Config::from_values(Some("bar"), Some("2"), Some("1000")),
+            Config::from_values(Some("bar"), Some("2"), Some("1000"), 0),
         );
 
         let rendered =
