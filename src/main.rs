@@ -16,7 +16,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use cachedir::{CacheDir, Clock, SystemClock};
-use config::{Config, UsageStyle};
+use config::Config;
 use gitstatus::{CommandGitRunner, GitRunner, GitStatus, GitStatusCollector};
 use oauth::{
     CredentialStore, HttpClient, OAuthUsageFetcher, SystemCredentialStore, UreqHttpClient,
@@ -25,7 +25,6 @@ use render::blocks::ContextUsage;
 use render::limits::{
     render_limits, BuiltInLimit, BuiltInLimits, LimitRenderContext, LocalOffset, SystemLocalOffset,
 };
-use render::meter::MeterStyle;
 use render::{render, RenderContext};
 use ttl::{CacheTtl, TokenUsage};
 use update::UpdateChecker;
@@ -128,7 +127,7 @@ where
             LimitRenderContext {
                 builtin: built_in_limits(parsed_input),
                 oauth: oauth_usage.as_ref(),
-                meter_style: meter_style(self.config.usage_style()),
+                theme: self.config.theme(),
             },
             &self.offset,
         );
@@ -146,7 +145,7 @@ where
             },
             cache_status,
             limits: &limits,
-            meter_style: meter_style(self.config.usage_style()),
+            theme: self.config.theme(),
             columns: self.config.columns(),
         });
         let update_line = UpdateChecker::new(
@@ -225,13 +224,6 @@ fn built_in_limits(input: &input::StatusInput) -> BuiltInLimits {
             used_percentage,
             resets_at: input.seven_day_resets_at(),
         }),
-    }
-}
-
-fn meter_style(usage_style: UsageStyle) -> MeterStyle {
-    match usage_style {
-        UsageStyle::Bar => MeterStyle::Bar,
-        UsageStyle::Dots => MeterStyle::Dots,
     }
 }
 

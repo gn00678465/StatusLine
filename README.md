@@ -133,7 +133,56 @@ when the file itself is ignored below.
 # ~/.config/cc-statusline/config.toml
 usage_style = "dots"   # "bar" (default) or "dots"
 git_cache_ttl = 2      # 0-60 seconds, Git status cache
+layout = "stacked"     # "auto" (default) or "stacked"
+
+[meter]
+width = 10             # 1-20 cells, default 10
+filled = "▓"           # default "▓" for bar, "●" for dots
+empty = "░"            # default "░" for bar, "○" for dots
+show_percentage = true # false drops the " 25%" after each meter
+show_reset = true      # false drops the " @14:00" reset time on limit blocks
+
+[colors]               # "#RRGGBB"
+folder = "#64DCFF"
+branch = "#64FF64"
+model = "#50B4FF"
+tokens = "#F0F0F0"
+levels = ["#64FF64", "#FFE650", "#FFAA50", "#FF6464"]  # below t0, t0-t1, t1-t2, from t2
+thresholds = [50, 70, 90]  # strictly ascending, each <= 100
 ```
+
+Every key is optional; a missing key keeps the built-in value. `auto` puts
+everything on one line and moves the context, cache, and limit blocks to a
+second `└─` line when the line is wider than `COLUMNS`. `stacked` always
+prints three lines and gives the limit blocks a line of their own:
+
+```text
+📁 project › 🌿 main │ 🤖 Opus · 🧠 xhigh
+├─ ⚡️ 50k/200k (▓▓░░░░░░░░ 25%) · Cache 50% 60:00
+└─ 📊 5h: ▓▓▓░░░░░░░ 30% @14:00 · 7d: … · Fable: …
+```
+
+#### Narrow or split panes
+
+Claude Code does not pass the pane width to the status line, so
+cc-statusline cannot shorten a line that is too wide; the terminal cuts off
+its end. With 5-hour, 7-day, and one weekly scope, the limit line is about
+104 columns with the defaults, 68 with `show_reset = false`, and 53 with
+`width = 5` added. For a pane of about 60 columns:
+
+```toml
+layout = "stacked"
+
+[meter]
+width = 5
+show_reset = false
+```
+
+When `levels` is not set, meters keep the built-in color order for the
+current style (bar: green, yellow, orange, red; dots: green, orange, yellow,
+red), and the `extra` usage block uses the bar order. `thresholds` also
+applies to the `extra` block. Colors that are not in `[colors]` (effort,
+Git `S`/`W`/`C` counts, cache TTL, dim separators) do not change.
 
 `COLUMNS` cannot be set from the file — it is a terminal property, not a
 preference. A missing file is silent. A value of the right TOML type but out
@@ -141,9 +190,12 @@ of range reuses that key's own existing validation rule instead of causing
 the file to be ignored: `usage_style = "foo"` falls back to `bar` (the only
 rule `usage_style` has), while `git_cache_ttl = 99` is *clamped* to `60`
 rather than falling back to the `2`-second default. Only a file that fails
-to parse at all — bad TOML syntax, or a value of the wrong type
-(`usage_style = 1`, `git_cache_ttl = "2"`, `git_cache_ttl = -1`) — is ignored
-in full: every key falls back to its default, and one line is printed to
+to parse at all — bad TOML syntax, a value of the wrong type
+(`usage_style = 1`, `git_cache_ttl = "2"`, `git_cache_ttl = -1`), or an
+invalid `layout`, `[meter]`, or `[colors]` value (a color that is not
+`#RRGGBB`, `width` outside 1-20, an empty glyph or one with a control
+character, `thresholds` that are not strictly ascending or are above 100) —
+is ignored in full: every key falls back to its default, and one line is printed to
 stderr (`cc-statusline: ignoring config file <path>: <error>`). stdout and
 the exit code are never affected. Unknown keys in the file are ignored, so
 an older binary can read a config file written by a newer one. The file is

@@ -7,6 +7,29 @@
 
 ## [Unreleased]
 
+### Added
+
+- 設定檔新增外觀設定，全部只能在設定檔中設定，不新增環境變數：
+  - `layout = "stacked"` 永遠輸出三行：第一行是資料夾、分支與模型，
+    `├─` 行是 context 與 cache，`└─` 行是 limits。預設 `auto` 保留原本依
+    `COLUMNS` 換行的行為。約 60 欄的窄 pane 需再搭配 `width = 5` 與
+    `show_reset = false`，limits 行才不會被截斷（見 README）。
+  - `[meter]`：`width`（1–20，預設 10）、`filled`／`empty` 字元（預設依
+    `usage_style`）、`show_percentage`、`show_reset`（隱藏 limits 區塊的
+    `@14:00` 重置時間）。
+  - `[colors]`：`folder`／`branch`／`model`／`tokens` 顏色（`#RRGGBB`），
+    meter 的四段顏色 `levels` 與門檻 `thresholds`（預設 `[50, 70, 90]`）。
+    未設定 `levels` 時保留 bar 與 dots 原本的顏色順序，`extra` 區塊使用 bar
+    的顏色順序。
+- 新的鍵在解析時驗證。顏色不是 `#RRGGBB`、`width` 超出 1–20、glyph 是空字
+  串或含控制字元、`thresholds` 沒有嚴格遞增或大於 100 時，整份設定檔忽略並
+  於 stderr 印出一行提示，與其他格式錯誤相同。
+
+### Notes
+
+- 沒有設定檔，或設定檔只有 `usage_style`／`git_cache_ttl` 時，輸出與
+  v2.1.0 完全相同。
+
 ## [v2.1.0] - 2026-09-06
 
 ### Added

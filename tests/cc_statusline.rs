@@ -93,6 +93,31 @@ fn renders_dots_meter_from_config_file() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn renders_stacked_layout_with_meter_and_color_overrides_from_config_file(
+) -> Result<(), Box<dyn Error>> {
+    let (command, home, _claude_config_dir) = isolated_command()?;
+    write_config_file(
+        &home,
+        "layout = \"stacked\"\n[meter]\nwidth = 5\nshow_reset = false\n[colors]\nmodel = \"#010203\"\n",
+    )?;
+
+    let (status, stdout, stderr) = run_with_fixture(command)?;
+
+    assert!(status.success());
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        [
+            "📁 \u{1b}[38;2;100;220;255mmock-project\u{1b}[0m \u{1b}[2m│\u{1b}[0m 🤖 \u{1b}[38;2;1;2;3mFable 5\u{1b}[0m",
+            "\u{1b}[2m├─\u{1b}[0m ⚡️ \u{1b}[38;2;240;240;240m50k\u{1b}[0m\u{1b}[2m/200k\u{1b}[0m \u{1b}[2m(\u{1b}[38;2;100;255;100m▓░░░░ 25%\u{1b}[0m\u{1b}[2m)\u{1b}[0m \u{1b}[2m·\u{1b}[0m \u{1b}[2mCache \u{1b}[0m\u{1b}[38;2;140;140;140m0%\u{1b}[0m \u{1b}[38;2;100;255;100m60:00\u{1b}[0m",
+            "\u{1b}[2m└─\u{1b}[0m 📊 \u{1b}[2m5h: \u{1b}[0m\u{1b}[38;2;100;255;100m▓░░░░ 20%\u{1b}[0m \u{1b}[2m·\u{1b}[0m \u{1b}[2m7d: \u{1b}[0m\u{1b}[38;2;255;230;80m▓▓░░░ 50%\u{1b}[0m",
+        ]
+    );
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+
+    Ok(())
+}
+
+#[test]
 fn renders_status_line_and_warns_on_malformed_config_file() -> Result<(), Box<dyn Error>> {
     let (command, home, _claude_config_dir) = isolated_command()?;
     write_config_file(&home, "usage_style = 1\n")?;
