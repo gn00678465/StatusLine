@@ -743,7 +743,7 @@ mod tests {
     fn treats_a_usage_cache_modified_after_the_clock_reading_as_fresh() -> Result<(), Box<dyn Error>>
     {
         let home = tempdir()?;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let now = 1_900_000_000_u64;
         let config_dir = Path::new("/custom/claude");
         let cache_name = cache_entry_name(config_dir);
         let cache_dir = CacheDir::from_paths(None, Some(home.path()));

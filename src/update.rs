@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn treats_a_cache_modified_after_the_clock_reading_as_fresh() -> Result<(), Box<dyn Error>> {
         let home = tempdir()?;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let now = 1_900_000_000_u64;
         let cache_dir = CacheDir::from_paths(None, Some(home.path()));
         assert!(cache_dir.atomic_write(super::CACHE_NAME, br#"{"tag_name":"v999.0.0"}"#));
         let cache_path = cache_dir
