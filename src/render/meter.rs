@@ -1,8 +1,7 @@
 //! Renders usage meters.
 
-use super::color::{DIM, DIM_OFF, GREEN, ORANGE, RED, RESET, YELLOW};
-
-const METER_WIDTH: usize = 10;
+use super::color::{DIM, DIM_OFF, RESET};
+use super::theme::{Rgb, Theme};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MeterStyle {
@@ -10,53 +9,51 @@ pub enum MeterStyle {
     Dots,
 }
 
-pub fn render_meter(percentage: i64, style: MeterStyle) -> String {
-    let percentage = percentage.clamp(0, 100);
-    let filled = percentage as usize * METER_WIDTH / 100;
-    let cells = match style {
-        MeterStyle::Bar => render_bar(filled),
-        MeterStyle::Dots => render_dots(filled),
-    };
-    let color = meter_color(percentage, style);
-
-    format!("{color}{cells} {percentage}%{RESET}")
-}
-
-fn meter_color(percentage: i64, style: MeterStyle) -> &'static str {
-    match (style, percentage) {
-        (_, 90..=100) => RED,
-        (MeterStyle::Bar, 70..=89) => ORANGE,
-        (MeterStyle::Bar, 50..=69) => YELLOW,
-        (MeterStyle::Dots, 70..=89) => YELLOW,
-        (MeterStyle::Dots, 50..=69) => ORANGE,
-        _ => GREEN,
-    }
-}
-
-fn render_bar(filled: usize) -> String {
-    format!("{}{}", "▓".repeat(filled), "░".repeat(METER_WIDTH - filled))
-}
-
-fn render_dots(filled: usize) -> String {
-    let mut dots = String::new();
-
-    for index in 0..METER_WIDTH {
-        if index < filled {
-            dots.push('●');
-        } else {
-            dots.push_str(DIM);
-            dots.push('○');
-            dots.push_str(DIM_OFF);
+impl MeterStyle {
+    pub fn glyphs(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Bar => ("▓", "░"),
+            Self::Dots => ("●", "○"),
         }
     }
 
-    dots
+    pub fn ladder(self) -> [Rgb; 4] {
+        match self {
+            Self::Bar => [Rgb::GREEN, Rgb::YELLOW, Rgb::ORANGE, Rgb::RED],
+            Self::Dots => [Rgb::GREEN, Rgb::ORANGE, Rgb::YELLOW, Rgb::RED],
+        }
+    }
+}
+
+pub fn render_meter(percentage: i64, theme: &Theme) -> String {
+    let meter = &theme.meter;
+    let percentage = percentage.clamp(0, 100);
+    let filled = percentage as usize * meter.width / 100;
+    let empty_cell = match meter.style {
+        MeterStyle::Bar => meter.empty.clone(),
+        MeterStyle::Dots => format!("{DIM}{}{DIM_OFF}", meter.empty),
+    };
+    let cells = format!(
+        "{}{}",
+        meter.filled.repeat(filled),
+        empty_cell.repeat(meter.width - filled)
+    );
+    let color = theme.colors.level_color(percentage, meter.style.ladder());
+    let label = if meter.show_percentage {
+        format!(" {percentage}%")
+    } else {
+        String::new()
+    };
+
+    format!("{color}{cells}{label}{RESET}")
 }
 
 #[cfg(test)]
 mod tests {
     use crate::render::color::{DIM, DIM_OFF, GREEN, ORANGE, RED, RESET, YELLOW};
     use crate::width::strip_ansi;
+
+    use crate::render::theme::{Rgb, Theme};
 
     use super::{render_meter, MeterStyle};
 
@@ -74,7 +71,7 @@ mod tests {
         ];
 
         for (style, percentage, color, expected_plain) in cases {
-            let rendered = render_meter(percentage, style);
+            let rendered = render_meter(percentage, &Theme::new(style));
 
             assert!(rendered.starts_with(color));
             assert!(rendered.ends_with(RESET));
@@ -82,7 +79,7 @@ mod tests {
         }
 
         assert_eq!(
-            render_meter(0, MeterStyle::Dots),
+            render_meter(0, &Theme::new(MeterStyle::Dots)),
             format!(
                 "{GREEN}{DIM}○{DIM_OFF}{DIM}○{DIM_OFF}{DIM}○{DIM_OFF}{DIM}○{DIM_OFF}{DIM}○{DIM_OFF}{DIM}○{DIM_OFF}{DIM}○{DIM_OFF}{DIM}○{DIM_OFF}{DIM}○{DIM_OFF}{DIM}○{DIM_OFF} 0%{RESET}"
             )
@@ -92,12 +89,45 @@ mod tests {
     #[test]
     fn clamps_meter_percentages_before_rendering() {
         assert_eq!(
-            render_meter(-1, MeterStyle::Bar),
-            render_meter(0, MeterStyle::Bar)
+            render_meter(-1, &Theme::new(MeterStyle::Bar)),
+            render_meter(0, &Theme::new(MeterStyle::Bar))
         );
         assert_eq!(
-            render_meter(101, MeterStyle::Dots),
-            render_meter(100, MeterStyle::Dots)
+            render_meter(101, &Theme::new(MeterStyle::Dots)),
+            render_meter(100, &Theme::new(MeterStyle::Dots))
         );
+    }
+
+    #[test]
+    fn applies_meter_width_glyphs_and_percentage_knobs() {
+        let mut theme = Theme::new(MeterStyle::Bar);
+        theme.meter.width = 4;
+        theme.meter.filled = "#".to_owned();
+        theme.meter.empty = "-".to_owned();
+        assert_eq!(strip_ansi(&render_meter(50, &theme)), "##-- 50%");
+
+        theme.meter.show_percentage = false;
+        assert_eq!(strip_ansi(&render_meter(50, &theme)), "##--");
+
+        let mut dots = Theme::new(MeterStyle::Dots);
+        dots.meter.width = 2;
+        dots.meter.empty = "_".to_owned();
+        assert_eq!(
+            render_meter(50, &dots),
+            format!("{ORANGE}●{DIM}_{DIM_OFF} 50%{RESET}")
+        );
+    }
+
+    #[test]
+    fn colors_meters_from_custom_levels_and_thresholds() {
+        let mut theme = Theme::new(MeterStyle::Dots);
+        theme.colors.thresholds = [10, 20, 30];
+        theme.colors.levels = Some([Rgb(1, 1, 1), Rgb(2, 2, 2), Rgb(3, 3, 3), Rgb(4, 4, 4)]);
+
+        assert!(render_meter(9, &theme).starts_with("\u{1b}[38;2;1;1;1m"));
+        assert!(render_meter(25, &theme).starts_with("\u{1b}[38;2;3;3;3m"));
+
+        theme.colors.levels = None;
+        assert!(render_meter(25, &theme).starts_with(YELLOW));
     }
 }

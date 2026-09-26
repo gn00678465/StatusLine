@@ -100,11 +100,15 @@ recommended 1 Hz redraw cadence for the warm-cache path:
 On Windows use `~/.claude/cc-statusline/cc-statusline.exe` (or the equivalent
 expanded `%USERPROFILE%` path accepted by the Claude Code host).
 
+If you set `statusLine.padding`, set `padding` in the config file to the same
+value (see [Line width](#line-width)).
+
 ## Output
 
 The line contains workspace/Git, model/effort, context, cache TTL, and rate
-limits. A long line wraps once with `└─`. The `bar` and `dots` meters use the
-same ten positions and color thresholds across context and limits.
+limits. A line that does not fit the pane wraps to two or three lines. The
+`bar` and `dots` meters use the same ten positions and color thresholds
+across context and limits.
 
 ```text
 📁 project › 🌿 feat/status [S1|W2] │ 🤖 Opus 4.7 · 🧠 high │ ⚡️ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 📊 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · Team model: ▓▓▓░░░░░░░ 30% @Apr 24, 08:00 · extra: $1.23/$10.00
@@ -118,7 +122,7 @@ same ten positions and color thresholds across context and limits.
 | `STATUSLINE_GIT_CACHE_TTL` | `0`–`60` | `2` seconds; controls per-session Git refresh |
 | `CLAUDE_CONFIG_DIR` | directory | Credential and OAuth cache configuration directory |
 | `CLAUDE_CODE_OAUTH_TOKEN` | token | Highest-priority OAuth token source |
-| `COLUMNS` | positive integer | Terminal width; invalid or missing values use `100` |
+| `COLUMNS` | positive integer | Pane width, set by Claude Code on every run; invalid or missing values use `100` |
 
 ### Config file
 
@@ -133,7 +137,62 @@ when the file itself is ignored below.
 # ~/.config/cc-statusline/config.toml
 usage_style = "dots"   # "bar" (default) or "dots"
 git_cache_ttl = 2      # 0-60 seconds, Git status cache
+padding = 0            # 0-20, default 0; must equal statusLine.padding
+layout = "stacked"     # "auto" (default) or "stacked"
+
+[meter]
+width = 10             # 1-20 cells, default 10
+filled = "▓"           # default "▓" for bar, "●" for dots
+empty = "░"            # default "░" for bar, "○" for dots
+show_percentage = true # false drops the " 25%" after each meter
+show_reset = true      # false drops the " @14:00" reset time on limit blocks
+
+[colors]               # "#RRGGBB"
+folder = "#64DCFF"
+branch = "#64FF64"
+model = "#50B4FF"
+tokens = "#F0F0F0"
+levels = ["#64FF64", "#FFE650", "#FFAA50", "#FF6464"]  # below t0, t0-t1, t1-t2, from t2
+thresholds = [50, 70, 90]  # strictly ascending, each <= 100
 ```
+
+Every key is optional; a missing key keeps the built-in value.
+
+#### Line width
+
+Claude Code sets `COLUMNS` to the live pane width on every status-line run,
+and the value follows pane resizes. Claude Code keeps 2 columns free on each
+side of the status line, plus `statusLine.padding` on each side. The usable
+width is `COLUMNS - 4 - 2 * padding`. Claude Code cuts a wider line at the end
+and shows `…` in its last visible cell. For this reason `padding` in the
+config file must equal `statusLine.padding` in the Claude Code settings.
+
+`auto` uses the fewest lines that fit the usable width, up to three:
+
+1. One line when the full line fits.
+2. Two lines when the context, cache, and limit blocks fit on one `└─` line
+   below the header.
+3. Otherwise three lines, the same as `stacked`.
+
+`auto` never moves a block further down than line 3. Claude Code cuts a line
+that still does not fit. Without limit blocks, `auto` stops at two lines.
+`stacked` always prints three lines and gives the limit blocks a line of
+their own:
+
+```text
+📁 project › 🌿 main │ 🤖 Opus · 🧠 xhigh
+├─ ⚡️ 50k/200k (▓▓░░░░░░░░ 25%) · Cache 50% 60:00
+└─ 📊 5h: ▓▓▓░░░░░░░ 30% @14:00 · 7d: … · Fable: …
+```
+
+To make the limit line shorter in a narrow pane, set `width = 5` and
+`show_reset = false` under `[meter]`.
+
+When `levels` is not set, meters keep the built-in color order for the
+current style (bar: green, yellow, orange, red; dots: green, orange, yellow,
+red), and the `extra` usage block uses the bar order. `thresholds` also
+applies to the `extra` block. Colors that are not in `[colors]` (effort,
+Git `S`/`W`/`C` counts, cache TTL, dim separators) do not change.
 
 `COLUMNS` cannot be set from the file — it is a terminal property, not a
 preference. A missing file is silent. A value of the right TOML type but out
@@ -141,9 +200,12 @@ of range reuses that key's own existing validation rule instead of causing
 the file to be ignored: `usage_style = "foo"` falls back to `bar` (the only
 rule `usage_style` has), while `git_cache_ttl = 99` is *clamped* to `60`
 rather than falling back to the `2`-second default. Only a file that fails
-to parse at all — bad TOML syntax, or a value of the wrong type
-(`usage_style = 1`, `git_cache_ttl = "2"`, `git_cache_ttl = -1`) — is ignored
-in full: every key falls back to its default, and one line is printed to
+to parse at all — bad TOML syntax, a value of the wrong type
+(`usage_style = 1`, `git_cache_ttl = "2"`, `git_cache_ttl = -1`), a
+`padding` outside 0-20, or an invalid `layout`, `[meter]`, or `[colors]`
+value (a color that is not `#RRGGBB`, `width` outside 1-20, an empty glyph
+or one with a control character, `thresholds` that are not strictly
+ascending or are above 100) — is ignored in full: every key falls back to its default, and one line is printed to
 stderr (`cc-statusline: ignoring config file <path>: <error>`). stdout and
 the exit code are never affected. Unknown keys in the file are ignored, so
 an older binary can read a config file written by a newer one. The file is

@@ -16,7 +16,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use cachedir::{CacheDir, Clock, SystemClock};
-use config::{Config, UsageStyle};
+use config::Config;
 use gitstatus::{CommandGitRunner, GitRunner, GitStatus, GitStatusCollector};
 use oauth::{
     CredentialStore, HttpClient, OAuthUsageFetcher, SystemCredentialStore, UreqHttpClient,
@@ -25,7 +25,6 @@ use render::blocks::ContextUsage;
 use render::limits::{
     render_limits, BuiltInLimit, BuiltInLimits, LimitRenderContext, LocalOffset, SystemLocalOffset,
 };
-use render::meter::MeterStyle;
 use render::{render, RenderContext};
 use ttl::{CacheTtl, TokenUsage};
 use update::UpdateChecker;
@@ -128,7 +127,7 @@ where
             LimitRenderContext {
                 builtin: built_in_limits(parsed_input),
                 oauth: oauth_usage.as_ref(),
-                meter_style: meter_style(self.config.usage_style()),
+                theme: self.config.theme(),
             },
             &self.offset,
         );
@@ -146,8 +145,8 @@ where
             },
             cache_status,
             limits: &limits,
-            meter_style: meter_style(self.config.usage_style()),
-            columns: self.config.columns(),
+            theme: self.config.theme(),
+            width: self.config.width(),
         });
         let update_line = UpdateChecker::new(
             self.http.clone(),
@@ -225,13 +224,6 @@ fn built_in_limits(input: &input::StatusInput) -> BuiltInLimits {
             used_percentage,
             resets_at: input.seven_day_resets_at(),
         }),
-    }
-}
-
-fn meter_style(usage_style: UsageStyle) -> MeterStyle {
-    match usage_style {
-        UsageStyle::Bar => MeterStyle::Bar,
-        UsageStyle::Dots => MeterStyle::Dots,
     }
 }
 
@@ -344,7 +336,7 @@ mod tests {
             CacheDir::from_paths(None, Some(home)),
             FixedClock,
             UtcOffset,
-            Config::from_values(Some("bar"), Some("2"), Some(columns)),
+            Config::from_values(Some("bar"), Some("2"), Some(columns), 0),
         )
     }
 
@@ -445,7 +437,8 @@ mod tests {
 📁 mock-project › 🌿 integration [S1|W1] │ 🤖 Fable 5 · 🧠 med │ ⚡️ 50k/200k (▓▓░░░░░░░░ 25%) · Cache 0% 60:00 · 📊 5h: ▓▓░░░░░░░░ 20% @17:46 · 7d: ▓▓▓▓▓░░░░░ 50% @Mar 24, 17:46 · Other: ▓▓▓▓▓▓▓▓▓░ 99% @Mar 24, 17:46 · Fable: ▓▓▓░░░░░░░ 30% @Mar 24, 17:46
 --- wrapped
 📁 mock-project › 🌿 integration [S1|W1] │ 🤖 Claude Enterprise Extremely Long Model Name · 🧠 xhigh
-└─ ⚡️ 600k/1.0m (▓▓▓▓▓▓░░░░ 60%) · Cache 17% 60:00 · 📊 5h: ▓▓░░░░░░░░ 20% @17:46 · 7d: ▓▓▓▓▓░░░░░ 50% @Mar 24, 17:46 · Other: ▓▓▓▓▓▓▓▓▓░ 99% @Mar 24, 17:46 · Fable: ▓▓▓░░░░░░░ 30% @Mar 24, 17:46
+├─ ⚡️ 600k/1.0m (▓▓▓▓▓▓░░░░ 60%) · Cache 17% 60:00
+└─ 📊 5h: ▓▓░░░░░░░░ 20% @17:46 · 7d: ▓▓▓▓▓░░░░░ 50% @Mar 24, 17:46 · Other: ▓▓▓▓▓▓▓▓▓░ 99% @Mar 24, 17:46 · Fable: ▓▓▓░░░░░░░ 30% @Mar 24, 17:46
 "###);
 
         Ok(())
@@ -460,7 +453,7 @@ mod tests {
             CacheDir::Unsafe,
             FixedClock,
             UtcOffset,
-            Config::from_values(Some("bar"), Some("2"), Some("1000")),
+            Config::from_values(Some("bar"), Some("2"), Some("1000"), 0),
         );
 
         let rendered =

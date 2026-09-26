@@ -2,8 +2,9 @@
 
 use crate::oauth::UsageResponse;
 
-use super::color::{DIM, GREEN, ORANGE, RED, RESET, YELLOW};
+use super::color::{DIM, RESET};
 use super::meter::{render_meter, MeterStyle};
+use super::theme::Theme;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BuiltInLimits {
@@ -20,7 +21,7 @@ pub struct BuiltInLimit {
 pub struct LimitRenderContext<'a> {
     pub builtin: BuiltInLimits,
     pub oauth: Option<&'a UsageResponse>,
-    pub meter_style: MeterStyle,
+    pub theme: &'a Theme,
 }
 
 pub trait LocalOffset {
@@ -52,6 +53,7 @@ impl LocalOffset for SystemLocalOffset {
 }
 
 pub fn render_limits<O: LocalOffset>(context: LimitRenderContext<'_>, offset: &O) -> String {
+    let theme = context.theme;
     let mut blocks = Vec::new();
 
     if context.builtin.five_hour.is_some() || context.builtin.seven_day.is_some() {
@@ -60,7 +62,7 @@ pub fn render_limits<O: LocalOffset>(context: LimitRenderContext<'_>, offset: &O
                 "5h",
                 five_hour,
                 ResetStyle::Time,
-                context.meter_style,
+                theme,
                 offset,
             ));
         }
@@ -69,7 +71,7 @@ pub fn render_limits<O: LocalOffset>(context: LimitRenderContext<'_>, offset: &O
                 "7d",
                 seven_day,
                 ResetStyle::DateTime,
-                context.meter_style,
+                theme,
                 offset,
             ));
         }
@@ -78,14 +80,14 @@ pub fn render_limits<O: LocalOffset>(context: LimitRenderContext<'_>, offset: &O
             "5h",
             &oauth.five_hour,
             ResetStyle::Time,
-            context.meter_style,
+            theme,
             offset,
         ));
         blocks.push(render_oauth_window(
             "7d",
             &oauth.seven_day,
             ResetStyle::DateTime,
-            context.meter_style,
+            theme,
             offset,
         ));
     } else {
@@ -95,14 +97,10 @@ pub fn render_limits<O: LocalOffset>(context: LimitRenderContext<'_>, offset: &O
 
     if let Some(oauth) = context.oauth {
         for weekly_scope in &oauth.weekly_scoped {
-            blocks.push(render_weekly_scope(
-                weekly_scope,
-                context.meter_style,
-                offset,
-            ));
+            blocks.push(render_weekly_scope(weekly_scope, theme, offset));
         }
         if oauth.extra_usage.is_enabled {
-            blocks.push(render_extra_usage(&oauth.extra_usage));
+            blocks.push(render_extra_usage(&oauth.extra_usage, theme));
         }
     }
 
@@ -123,80 +121,61 @@ fn render_builtin_window<O: LocalOffset>(
     label: &str,
     limit: BuiltInLimit,
     reset_style: ResetStyle,
-    meter_style: MeterStyle,
+    theme: &Theme,
     offset: &O,
 ) -> String {
     let percentage = builtin_percentage(limit.used_percentage);
-    let mut block = format!(
-        "{DIM}{label}: {RESET}{}",
-        render_meter(i64::from(percentage), meter_style)
-    );
-
-    if let Some(reset_at) = limit
+    let reset_at = limit
         .resets_at
-        .and_then(|reset_at| format_epoch_reset(reset_at, reset_style, offset))
-    {
-        block.push_str(&format!(" {DIM}@{reset_at}{RESET}"));
-    }
+        .and_then(|reset_at| format_epoch_reset(reset_at, reset_style, offset));
 
-    block
+    render_window(label, i64::from(percentage), reset_at, theme)
 }
 
 fn render_oauth_window<O: LocalOffset>(
     label: &str,
     window: &crate::oauth::UsageWindow,
     reset_style: ResetStyle,
-    meter_style: MeterStyle,
+    theme: &Theme,
     offset: &O,
 ) -> String {
-    let percentage = i64::from(window.utilization);
-    let mut block = format!(
-        "{DIM}{label}: {RESET}{}",
-        render_meter(percentage, meter_style)
-    );
+    let reset_at = format_iso_reset(&window.resets_at, reset_style, offset);
 
-    if let Some(reset_at) = format_iso_reset(&window.resets_at, reset_style, offset) {
-        block.push_str(&format!(" {DIM}@{reset_at}{RESET}"));
-    }
-
-    block
+    render_window(label, i64::from(window.utilization), reset_at, theme)
 }
 
 fn render_weekly_scope<O: LocalOffset>(
     scope: &crate::oauth::WeeklyScopedUsage,
-    meter_style: MeterStyle,
+    theme: &Theme,
     offset: &O,
 ) -> String {
-    let percentage = i64::from(scope.percent);
-    let mut block = format!(
-        "{DIM}{}: {RESET}{}",
-        scope.display_name,
-        render_meter(percentage, meter_style)
-    );
+    let reset_at = format_iso_reset(&scope.resets_at, ResetStyle::DateTime, offset);
 
-    if let Some(reset_at) = format_iso_reset(&scope.resets_at, ResetStyle::DateTime, offset) {
-        block.push_str(&format!(" {DIM}@{reset_at}{RESET}"));
-    }
-
-    block
+    render_window(
+        &scope.display_name,
+        i64::from(scope.percent),
+        reset_at,
+        theme,
+    )
 }
 
-fn render_extra_usage(extra_usage: &crate::oauth::ExtraUsage) -> String {
-    let color = bar_usage_color(i64::from(extra_usage.utilization));
+fn render_window(label: &str, percentage: i64, reset_at: Option<String>, theme: &Theme) -> String {
+    let meter = render_meter(percentage, theme);
+    match reset_at.filter(|_| theme.meter.show_reset) {
+        Some(reset_at) => format!("{DIM}{label}: {RESET}{meter} {DIM}@{reset_at}{RESET}"),
+        None => format!("{DIM}{label}: {RESET}{meter}"),
+    }
+}
+
+fn render_extra_usage(extra_usage: &crate::oauth::ExtraUsage, theme: &Theme) -> String {
+    let color = theme
+        .colors
+        .level_color(i64::from(extra_usage.utilization), MeterStyle::Bar.ladder());
 
     format!(
         "{DIM}extra: {RESET}{color}${:.2}/${:.2}{RESET}",
         extra_usage.used_credits, extra_usage.monthly_limit
     )
-}
-
-fn bar_usage_color(percentage: i64) -> &'static str {
-    match percentage.clamp(0, 100) {
-        90..=100 => RED,
-        70..=89 => ORANGE,
-        50..=69 => YELLOW,
-        _ => GREEN,
-    }
 }
 
 fn builtin_percentage(percentage: f64) -> u8 {
@@ -504,6 +483,7 @@ mod tests {
 
     use crate::oauth::{ExtraUsage, UsageResponse, UsageWindow, WeeklyScopedUsage};
     use crate::render::meter::MeterStyle;
+    use crate::render::theme::{Rgb, Theme};
     use crate::width::strip_ansi;
 
     use super::{render_limits, BuiltInLimit, BuiltInLimits, LimitRenderContext, LocalOffset};
@@ -561,7 +541,7 @@ mod tests {
             LimitRenderContext {
                 builtin: BuiltInLimits::default(),
                 oauth: None,
-                meter_style: MeterStyle::Bar,
+                theme: &Theme::new(MeterStyle::Bar),
             },
             &UtcOffset,
         );
@@ -584,7 +564,7 @@ mod tests {
                     }),
                 },
                 oauth: None,
-                meter_style: MeterStyle::Bar,
+                theme: &Theme::new(MeterStyle::Bar),
             },
             &UtcOffset,
         );
@@ -602,7 +582,7 @@ mod tests {
             LimitRenderContext {
                 builtin: BuiltInLimits::default(),
                 oauth: Some(&oauth),
-                meter_style: MeterStyle::Bar,
+                theme: &Theme::new(MeterStyle::Bar),
             },
             &UtcOffset,
         );
@@ -632,7 +612,7 @@ mod tests {
                     }),
                 },
                 oauth: None,
-                meter_style: MeterStyle::Bar,
+                theme: &Theme::new(MeterStyle::Bar),
             },
             &UtcOffset,
         );
@@ -658,7 +638,7 @@ mod tests {
                     seven_day: None,
                 },
                 oauth: Some(&oauth),
-                meter_style: MeterStyle::Bar,
+                theme: &Theme::new(MeterStyle::Bar),
             },
             &UtcOffset,
         );
@@ -667,7 +647,7 @@ mod tests {
             strip_ansi(&rendered),
             @r###"📊 5h: ░░░░░░░░░░ 0% @17:46 · Haiku: ▓▓▓░░░░░░░ 30% @Mar 17, 17:46 · Sonnet: ▓▓▓▓░░░░░░ 40% @Mar 17, 17:46 · extra: $12.50/$100.00"###
         );
-        assert!(rendered.contains(super::ORANGE));
+        assert!(rendered.contains(crate::render::color::ORANGE));
     }
 
     #[test]
@@ -702,5 +682,30 @@ mod tests {
     fn clamps_builtin_percentages_before_rendering() {
         assert_eq!(super::builtin_percentage(-1.0), 0);
         assert_eq!(super::builtin_percentage(100.1), 100);
+    }
+
+    #[test]
+    fn hides_reset_suffixes_and_colors_extra_usage_from_custom_levels() {
+        let oauth = oauth_usage();
+        let mut theme = Theme::new(MeterStyle::Dots);
+        theme.meter.show_reset = false;
+        theme.colors.levels = Some([Rgb(1, 1, 1), Rgb(2, 2, 2), Rgb(3, 3, 3), Rgb(4, 4, 4)]);
+        let rendered = render_limits(
+            LimitRenderContext {
+                builtin: BuiltInLimits::default(),
+                oauth: Some(&oauth),
+                theme: &theme,
+            },
+            &UtcOffset,
+        );
+
+        assert_eq!(
+            strip_ansi(&rendered),
+            "📊 5h: ●●○○○○○○○○ 20% · 7d: ●●●●●○○○○○ 50% · Haiku: ●●●○○○○○○○ 30% · Sonnet: ●●●●○○○○○○ 40% · extra: $12.50/$100.00"
+        );
+        assert!(
+            rendered.ends_with("\u{1b}[38;2;3;3;3m$12.50/$100.00\u{1b}[0m"),
+            "{rendered:?}"
+        );
     }
 }

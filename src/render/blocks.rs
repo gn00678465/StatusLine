@@ -1,7 +1,8 @@
 //! Renders individual status-line blocks.
 
-use super::color::{BLUE, BRIGHT_RED, CYAN, DIM, GRAY, GREEN, ORANGE, RED, RESET, WHITE, YELLOW};
-use super::meter::{render_meter, MeterStyle};
+use super::color::{BRIGHT_RED, DIM, GRAY, GREEN, ORANGE, RED, RESET, YELLOW};
+use super::meter::render_meter;
+use super::theme::{Palette, Theme};
 use crate::gitstatus::GitStatus;
 use crate::ttl::{CacheTtlStatus, TtlColor, TtlDisplay};
 
@@ -22,8 +23,8 @@ pub fn format_tokens(tokens: u64) -> String {
     }
 }
 
-pub fn render_model(model_name: &str, effort_level: Option<&str>) -> String {
-    let mut block = format!("🤖 {BLUE}{model_name}{RESET}");
+pub fn render_model(model_name: &str, effort_level: Option<&str>, palette: &Palette) -> String {
+    let mut block = format!("🤖 {}{model_name}{RESET}", palette.model);
 
     if let Some(effort_level) = effort_level {
         let (color, label) = match effort_level {
@@ -40,15 +41,22 @@ pub fn render_model(model_name: &str, effort_level: Option<&str>) -> String {
     block
 }
 
-pub fn render_workspace(cwd: Option<&str>, git_status: &GitStatus) -> Option<String> {
+pub fn render_workspace(
+    cwd: Option<&str>,
+    git_status: &GitStatus,
+    palette: &Palette,
+) -> Option<String> {
     let cwd = cwd?;
     let normalized_cwd = cwd.replace('\\', "/");
     let display_directory: String = normalized_cwd.rsplit('/').take(1).collect();
-    let mut block = format!("📁 {CYAN}{display_directory}{RESET}");
+    let mut block = format!("📁 {}{display_directory}{RESET}", palette.folder);
 
     if git_status.is_repository {
         if let Some(branch) = git_status.branch.as_deref() {
-            block.push_str(&format!(" {DIM}›{RESET} 🌿 {GREEN}{branch}{RESET}"));
+            block.push_str(&format!(
+                " {DIM}›{RESET} 🌿 {}{branch}{RESET}",
+                palette.branch
+            ));
 
             let mut details = Vec::new();
             if git_status.staged > 0 {
@@ -82,16 +90,17 @@ pub struct ContextUsage {
     pub official_percentage: Option<f64>,
 }
 
-pub fn render_context(usage: ContextUsage, meter_style: MeterStyle) -> String {
+pub fn render_context(usage: ContextUsage, theme: &Theme) -> String {
     let current_tokens = u128::from(usage.input_tokens)
         + u128::from(usage.cache_creation_tokens)
         + u128::from(usage.cache_read_tokens);
     let used_tokens = format_tokens(current_tokens.min(u128::from(u64::MAX)) as u64);
     let total_tokens = format_tokens(usage.context_window_size);
     let percentage = context_percentage(usage, current_tokens);
-    let meter = render_meter(i64::from(percentage), meter_style);
+    let meter = render_meter(i64::from(percentage), theme);
+    let tokens = theme.colors.tokens;
 
-    format!("⚡️ {WHITE}{used_tokens}{RESET}{DIM}/{total_tokens}{RESET} {DIM}({meter}{DIM}){RESET}")
+    format!("⚡️ {tokens}{used_tokens}{RESET}{DIM}/{total_tokens}{RESET} {DIM}({meter}{DIM}){RESET}")
 }
 
 pub fn render_cache(status: CacheTtlStatus) -> String {
@@ -165,12 +174,16 @@ fn fallback_context_percentage(current_tokens: u128, context_window_size: u64) -
 mod tests {
     use insta::assert_snapshot;
 
+    use crate::gitstatus::GitStatus;
     use crate::render::color::{BLUE, BRIGHT_RED, DIM, GRAY, ORANGE, RED, RESET, YELLOW};
     use crate::render::meter::MeterStyle;
+    use crate::render::theme::{Palette, Rgb, Theme};
     use crate::ttl::{CacheTtlStatus, TtlColor, TtlDisplay};
     use crate::width::strip_ansi;
 
-    use super::{format_tokens, render_cache, render_context, render_model, ContextUsage};
+    use super::{
+        format_tokens, render_cache, render_context, render_model, render_workspace, ContextUsage,
+    };
 
     #[test]
     fn formats_token_counts_with_shell_rounding_boundaries() {
@@ -201,13 +214,13 @@ mod tests {
 
         for (effort, color, label) in cases {
             assert_eq!(
-                render_model("Sonnet", Some(effort)),
+                render_model("Sonnet", Some(effort), &Palette::default()),
                 format!("🤖 {BLUE}Sonnet{RESET} {DIM}·{RESET} 🧠 {color}{label}{RESET}")
             );
         }
 
         assert_eq!(
-            render_model("Sonnet", None),
+            render_model("Sonnet", None, &Palette::default()),
             format!("🤖 {BLUE}Sonnet{RESET}")
         );
     }
@@ -222,7 +235,7 @@ mod tests {
                 context_window_size: 1_000,
                 official_percentage: Some(49.5),
             },
-            MeterStyle::Bar,
+            &Theme::new(MeterStyle::Bar),
         );
         let fallback = render_context(
             ContextUsage {
@@ -232,7 +245,7 @@ mod tests {
                 context_window_size: 10_000,
                 official_percentage: None,
             },
-            MeterStyle::Bar,
+            &Theme::new(MeterStyle::Bar),
         );
 
         assert_eq!(strip_ansi(&official), "⚡️ 80/1k (▓▓▓▓▓░░░░░ 50%)");
@@ -297,6 +310,51 @@ Cache 49%
         assert_eq!(
             cache,
             format!("{DIM}Cache {RESET}{GRAY}49%{RESET} {BRIGHT_RED}5:00{RESET}")
+        );
+    }
+
+    #[test]
+    fn paints_folder_branch_model_and_tokens_from_the_palette() {
+        let palette = Palette {
+            folder: Rgb(1, 1, 1),
+            branch: Rgb(2, 2, 2),
+            model: Rgb(3, 3, 3),
+            tokens: Rgb(4, 4, 4),
+            ..Palette::default()
+        };
+        let git_status = GitStatus {
+            is_repository: true,
+            branch: Some("main".to_owned()),
+            ..GitStatus::default()
+        };
+        let theme = Theme {
+            colors: palette,
+            ..Theme::new(MeterStyle::Bar)
+        };
+        let context = render_context(
+            ContextUsage {
+                input_tokens: 1_000,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                context_window_size: 10_000,
+                official_percentage: None,
+            },
+            &theme,
+        );
+
+        assert_eq!(
+            render_workspace(Some("/work/project"), &git_status, &palette),
+            Some(format!(
+                "📁 \u{1b}[38;2;1;1;1mproject{RESET} {DIM}›{RESET} 🌿 \u{1b}[38;2;2;2;2mmain{RESET}"
+            ))
+        );
+        assert_eq!(
+            render_model("Opus", None, &palette),
+            format!("🤖 \u{1b}[38;2;3;3;3mOpus{RESET}")
+        );
+        assert!(
+            context.starts_with(&format!("⚡️ \u{1b}[38;2;4;4;4m1k{RESET}")),
+            "{context:?}"
         );
     }
 }

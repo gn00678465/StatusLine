@@ -6,8 +6,17 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use serde::de::{Deserialize, Deserializer, Error as _};
+
+use crate::render::meter::MeterStyle;
+use crate::render::theme::{Layout, MeterTheme, Palette, Rgb, Theme, MAX_METER_WIDTH};
+
 const DEFAULT_GIT_CACHE_TTL_SECONDS: u64 = 2;
 const DEFAULT_COLUMNS: usize = 100;
+/// Measured in Claude Code: it keeps 2 columns free on each side of the
+/// status line, plus `statusLine.padding` on each side.
+const CLAUDE_CODE_MARGIN_COLUMNS: usize = 4;
+const MAX_PADDING: u8 = 20;
 /// A 1 MiB main-thread stack overflows parsing `basic-toml` around nesting
 /// depth 2500 (~5 KB file); this cap keeps every read far below that.
 const MAX_CONFIG_FILE_BYTES: usize = 16_384;
@@ -15,17 +24,88 @@ const MAX_CONFIG_FILE_BYTES: usize = 16_384;
 /// overflowing, leaving roughly 5x headroom over `MAX_CONFIG_FILE_BYTES`.
 const PARSER_STACK_SIZE_BYTES: usize = 16 << 20;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum UsageStyle {
-    Bar,
-    Dots,
-}
-
+/// New keys are validated while deserializing so a bad value takes the same
+/// whole-file-ignore path as a TOML syntax error; `usage_style` and
+/// `git_cache_ttl` keep their older lenient per-key fallback.
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub(crate) struct FileConfig {
     usage_style: Option<String>,
     git_cache_ttl: Option<u64>,
+    #[serde(deserialize_with = "padding")]
+    padding: u8,
+    layout: Layout,
+    meter: FileMeter,
+    colors: FileColors,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct FileMeter {
+    #[serde(deserialize_with = "meter_width")]
+    width: Option<usize>,
+    #[serde(deserialize_with = "glyph")]
+    filled: Option<String>,
+    #[serde(deserialize_with = "glyph")]
+    empty: Option<String>,
+    show_percentage: Option<bool>,
+    show_reset: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct FileColors {
+    folder: Option<Rgb>,
+    branch: Option<Rgb>,
+    model: Option<Rgb>,
+    tokens: Option<Rgb>,
+    levels: Option<[Rgb; 4]>,
+    #[serde(deserialize_with = "thresholds")]
+    thresholds: Option<[u8; 3]>,
+}
+
+fn padding<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u8, D::Error> {
+    let padding = u8::deserialize(deserializer)?;
+    if padding <= MAX_PADDING {
+        Ok(padding)
+    } else {
+        Err(D::Error::custom(format!(
+            "padding {padding} is outside 0..={MAX_PADDING}"
+        )))
+    }
+}
+
+fn meter_width<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<usize>, D::Error> {
+    let width = usize::deserialize(deserializer)?;
+    if (1..=MAX_METER_WIDTH).contains(&width) {
+        Ok(Some(width))
+    } else {
+        Err(D::Error::custom(format!(
+            "{width} is outside 1..={MAX_METER_WIDTH}"
+        )))
+    }
+}
+
+fn glyph<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    let glyph = String::deserialize(deserializer)?;
+    if glyph.is_empty() || glyph.chars().any(char::is_control) {
+        Err(D::Error::custom(format!(
+            "{glyph:?} must be non-empty without control characters"
+        )))
+    } else {
+        Ok(Some(glyph))
+    }
+}
+
+fn thresholds<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<[u8; 3]>, D::Error> {
+    let [low, middle, high] = <[u8; 3]>::deserialize(deserializer)?;
+    if low < middle && middle < high && high <= 100 {
+        Ok(Some([low, middle, high]))
+    } else {
+        Err(D::Error::custom(format!(
+            "[{low}, {middle}, {high}] must be strictly ascending and <= 100"
+        )))
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -113,9 +193,10 @@ fn diagnostic(path: &Path, error: &dyn std::fmt::Display) -> String {
 
 #[derive(Debug)]
 pub(crate) struct Config {
-    usage_style: UsageStyle,
+    theme: Theme,
     git_cache_ttl_seconds: u64,
-    columns: usize,
+    /// Columns Claude Code shows before it cuts the line with `…`.
+    width: usize,
 }
 
 impl Config {
@@ -124,12 +205,17 @@ impl Config {
         let git_cache_ttl =
             non_empty(env.git_cache_ttl).or_else(|| file.git_cache_ttl.map(|ttl| ttl.to_string()));
         let columns = non_empty(env.columns);
-
-        Self::from_values(
+        let base = Self::from_values(
             usage_style.as_deref(),
             git_cache_ttl.as_deref(),
             columns.as_deref(),
-        )
+            file.padding,
+        );
+
+        Self {
+            theme: overlay_theme(base.theme, file.layout, file.meter, file.colors),
+            ..base
+        }
     }
 
     /// Reads env vars and the user config file, in that priority order.
@@ -155,24 +241,27 @@ impl Config {
         usage_style: Option<&str>,
         git_cache_ttl: Option<&str>,
         columns: Option<&str>,
+        padding: u8,
     ) -> Self {
+        let margin = CLAUDE_CODE_MARGIN_COLUMNS + 2 * usize::from(padding);
+
         Self {
-            usage_style: parse_usage_style(usage_style),
+            theme: Theme::new(parse_usage_style(usage_style)),
             git_cache_ttl_seconds: parse_git_cache_ttl(git_cache_ttl),
-            columns: parse_columns(columns),
+            width: parse_columns(columns).saturating_sub(margin),
         }
     }
 
-    pub(crate) fn usage_style(&self) -> UsageStyle {
-        self.usage_style
+    pub(crate) fn theme(&self) -> &Theme {
+        &self.theme
     }
 
     pub(crate) fn git_cache_ttl_seconds(&self) -> u64 {
         self.git_cache_ttl_seconds
     }
 
-    pub(crate) fn columns(&self) -> usize {
-        self.columns
+    pub(crate) fn width(&self) -> usize {
+        self.width
     }
 }
 
@@ -180,10 +269,34 @@ fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.is_empty())
 }
 
-fn parse_usage_style(value: Option<&str>) -> UsageStyle {
+fn parse_usage_style(value: Option<&str>) -> MeterStyle {
     match value {
-        Some("dots") => UsageStyle::Dots,
-        Some("bar") | Some(_) | None => UsageStyle::Bar,
+        Some("dots") => MeterStyle::Dots,
+        Some("bar") | Some(_) | None => MeterStyle::Bar,
+    }
+}
+
+fn overlay_theme(defaults: Theme, layout: Layout, meter: FileMeter, colors: FileColors) -> Theme {
+    Theme {
+        layout,
+        meter: MeterTheme {
+            style: defaults.meter.style,
+            width: meter.width.unwrap_or(defaults.meter.width),
+            filled: meter.filled.unwrap_or(defaults.meter.filled),
+            empty: meter.empty.unwrap_or(defaults.meter.empty),
+            show_percentage: meter
+                .show_percentage
+                .unwrap_or(defaults.meter.show_percentage),
+            show_reset: meter.show_reset.unwrap_or(defaults.meter.show_reset),
+        },
+        colors: Palette {
+            folder: colors.folder.unwrap_or(defaults.colors.folder),
+            branch: colors.branch.unwrap_or(defaults.colors.branch),
+            model: colors.model.unwrap_or(defaults.colors.model),
+            tokens: colors.tokens.unwrap_or(defaults.colors.tokens),
+            levels: colors.levels.or(defaults.colors.levels),
+            thresholds: colors.thresholds.unwrap_or(defaults.colors.thresholds),
+        },
     }
 }
 
@@ -208,7 +321,10 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{config_file_path, read_config_file, Config, EnvValues, FileConfig, UsageStyle};
+    use crate::render::meter::MeterStyle;
+    use crate::render::theme::{Layout, MeterTheme, Palette, Rgb, Theme};
+
+    use super::{config_file_path, read_config_file, Config, EnvValues, FileConfig};
 
     #[test]
     fn missing_config_file_yields_defaults_without_diagnostic() -> Result<(), Box<dyn Error>> {
@@ -218,9 +334,9 @@ mod tests {
         let (file, diagnostic) = read_config_file(&path);
         let config = Config::resolve(EnvValues::default(), file);
 
-        assert_eq!(config.usage_style(), UsageStyle::Bar);
+        assert_eq!(config.theme().meter.style, MeterStyle::Bar);
         assert_eq!(config.git_cache_ttl_seconds(), 2);
-        assert_eq!(config.columns(), 100);
+        assert_eq!(config.width(), 96);
         assert_eq!(diagnostic, None);
 
         Ok(())
@@ -244,12 +360,12 @@ mod tests {
             let config = Config::resolve(EnvValues::default(), file);
 
             assert_eq!(
-                config.usage_style(),
-                UsageStyle::Bar,
+                config.theme().meter.style,
+                MeterStyle::Bar,
                 "contents: {contents}"
             );
             assert_eq!(config.git_cache_ttl_seconds(), 2, "contents: {contents}");
-            assert_eq!(config.columns(), 100, "contents: {contents}");
+            assert_eq!(config.width(), 96, "contents: {contents}");
 
             let diagnostic = diagnostic
                 .ok_or_else(|| format!("expected a diagnostic for contents: {contents}"))?;
@@ -271,9 +387,9 @@ mod tests {
         let (file, diagnostic) = read_config_file(&path);
         let config = Config::resolve(EnvValues::default(), file);
 
-        assert_eq!(config.usage_style(), UsageStyle::Bar);
+        assert_eq!(config.theme().meter.style, MeterStyle::Bar);
         assert_eq!(config.git_cache_ttl_seconds(), 2);
-        assert_eq!(config.columns(), 100);
+        assert_eq!(config.width(), 96);
         let diagnostic = diagnostic.ok_or("expected a diagnostic for non-UTF-8 content")?;
         assert!(
             diagnostic.contains(&path.display().to_string()),
@@ -292,9 +408,9 @@ mod tests {
         let (file, diagnostic) = read_config_file(&path);
         let config = Config::resolve(EnvValues::default(), file);
 
-        assert_eq!(config.usage_style(), UsageStyle::Bar);
+        assert_eq!(config.theme().meter.style, MeterStyle::Bar);
         assert_eq!(config.git_cache_ttl_seconds(), 2);
-        assert_eq!(config.columns(), 100);
+        assert_eq!(config.width(), 96);
         assert!(diagnostic.is_some());
 
         Ok(())
@@ -317,7 +433,7 @@ mod tests {
         let (file, diagnostic) = read_config_file(&path);
         let config = Config::resolve(EnvValues::default(), file);
 
-        assert_eq!(config.usage_style(), UsageStyle::Bar);
+        assert_eq!(config.theme().meter.style, MeterStyle::Bar);
         assert_eq!(config.git_cache_ttl_seconds(), 2);
         let diagnostic =
             diagnostic.ok_or("expected a diagnostic for a file over the 16384-byte limit")?;
@@ -334,8 +450,11 @@ mod tests {
         let (file, diagnostic) = read_config_file(&path);
 
         assert_eq!(
-            Config::resolve(EnvValues::default(), file).usage_style(),
-            UsageStyle::Dots
+            Config::resolve(EnvValues::default(), file)
+                .theme()
+                .meter
+                .style,
+            MeterStyle::Dots
         );
         assert_eq!(diagnostic, None);
 
@@ -385,7 +504,10 @@ mod tests {
             ..FileConfig::default()
         };
 
-        assert_eq!(Config::resolve(env, file).usage_style(), UsageStyle::Dots);
+        assert_eq!(
+            Config::resolve(env, file).theme().meter.style,
+            MeterStyle::Dots
+        );
     }
 
     #[test]
@@ -399,8 +521,8 @@ mod tests {
             ..FileConfig::default()
         };
         assert_eq!(
-            Config::resolve(env_bar, file_dots).usage_style(),
-            UsageStyle::Bar
+            Config::resolve(env_bar, file_dots).theme().meter.style,
+            MeterStyle::Bar
         );
 
         let env_dots = EnvValues {
@@ -412,8 +534,8 @@ mod tests {
             ..FileConfig::default()
         };
         assert_eq!(
-            Config::resolve(env_dots, file_bar).usage_style(),
-            UsageStyle::Dots
+            Config::resolve(env_dots, file_bar).theme().meter.style,
+            MeterStyle::Dots
         );
     }
 
@@ -427,7 +549,10 @@ mod tests {
             usage_style: Some("dots".to_owned()),
             ..FileConfig::default()
         };
-        assert_eq!(Config::resolve(env, file).usage_style(), UsageStyle::Dots);
+        assert_eq!(
+            Config::resolve(env, file).theme().meter.style,
+            MeterStyle::Dots
+        );
 
         let env = EnvValues {
             git_cache_ttl: Some(String::new()),
@@ -466,8 +591,11 @@ mod tests {
         };
 
         assert_eq!(
-            Config::resolve(EnvValues::default(), file).usage_style(),
-            UsageStyle::Bar
+            Config::resolve(EnvValues::default(), file)
+                .theme()
+                .meter
+                .style,
+            MeterStyle::Bar
         );
     }
 
@@ -480,8 +608,11 @@ mod tests {
         let (file, diagnostic) = read_config_file(&path);
 
         assert_eq!(
-            Config::resolve(EnvValues::default(), file).usage_style(),
-            UsageStyle::Dots
+            Config::resolve(EnvValues::default(), file)
+                .theme()
+                .meter
+                .style,
+            MeterStyle::Dots
         );
         assert_eq!(diagnostic, None);
 
@@ -497,7 +628,7 @@ mod tests {
         let (file, _diagnostic) = read_config_file(&path);
         let config = Config::resolve(EnvValues::default(), file);
 
-        assert_eq!(config.columns(), 100);
+        assert_eq!(config.width(), 96);
 
         Ok(())
     }
@@ -514,9 +645,9 @@ mod tests {
             },
             file.clone(),
         );
-        assert_eq!(configured.usage_style(), UsageStyle::Dots);
+        assert_eq!(configured.theme().meter.style, MeterStyle::Dots);
         assert_eq!(configured.git_cache_ttl_seconds(), 60);
-        assert_eq!(configured.columns(), 250);
+        assert_eq!(configured.width(), 246);
 
         let fallback = Config::resolve(
             EnvValues {
@@ -526,9 +657,9 @@ mod tests {
             },
             file.clone(),
         );
-        assert_eq!(fallback.usage_style(), UsageStyle::Bar);
+        assert_eq!(fallback.theme().meter.style, MeterStyle::Bar);
         assert_eq!(fallback.git_cache_ttl_seconds(), 2);
-        assert_eq!(fallback.columns(), 100);
+        assert_eq!(fallback.width(), 96);
 
         let negative_ttl = Config::resolve(
             EnvValues {
@@ -539,32 +670,191 @@ mod tests {
             file.clone(),
         );
         assert_eq!(negative_ttl.git_cache_ttl_seconds(), 2);
-        assert_eq!(negative_ttl.columns(), 100);
+        assert_eq!(negative_ttl.width(), 96);
 
         let missing_columns = Config::resolve(EnvValues::default(), file);
-        assert_eq!(missing_columns.columns(), 100);
+        assert_eq!(missing_columns.width(), 96);
     }
 
     #[test]
     fn parses_usage_style_ttl_and_columns_with_clamps_and_fallbacks() {
-        let configured = Config::from_values(Some("dots"), Some("99"), Some("250"));
+        let configured = Config::from_values(Some("dots"), Some("99"), Some("250"), 0);
 
-        assert_eq!(configured.usage_style(), UsageStyle::Dots);
+        assert_eq!(configured.theme().meter.style, MeterStyle::Dots);
         assert_eq!(configured.git_cache_ttl_seconds(), 60);
-        assert_eq!(configured.columns(), 250);
+        assert_eq!(configured.width(), 246);
 
-        let fallback = Config::from_values(Some("invalid"), Some("not-a-number"), Some("0"));
+        let fallback = Config::from_values(Some("invalid"), Some("not-a-number"), Some("0"), 0);
 
-        assert_eq!(fallback.usage_style(), UsageStyle::Bar);
+        assert_eq!(fallback.theme().meter.style, MeterStyle::Bar);
         assert_eq!(fallback.git_cache_ttl_seconds(), 2);
-        assert_eq!(fallback.columns(), 100);
+        assert_eq!(fallback.width(), 96);
 
-        let negative_ttl = Config::from_values(None, Some("-1"), Some("not-a-number"));
+        let negative_ttl = Config::from_values(None, Some("-1"), Some("not-a-number"), 0);
 
         assert_eq!(negative_ttl.git_cache_ttl_seconds(), 2);
-        assert_eq!(negative_ttl.columns(), 100);
+        assert_eq!(negative_ttl.width(), 96);
 
-        let missing_columns = Config::from_values(None, None, None);
-        assert_eq!(missing_columns.columns(), 100);
+        let missing_columns = Config::from_values(None, None, None, 0);
+        assert_eq!(missing_columns.width(), 96);
+    }
+
+    #[test]
+    fn padding_reduces_the_usable_width_by_two_columns_per_unit() -> Result<(), Box<dyn Error>> {
+        let dir = tempdir()?;
+        let path = dir.path().join("config.toml");
+        let width_with = |padding: &str, columns: &str| -> Result<usize, Box<dyn Error>> {
+            std::fs::write(&path, padding)?;
+            let (file, diagnostic) = read_config_file(&path);
+            assert_eq!(diagnostic, None, "contents: {padding}");
+            let env = EnvValues {
+                columns: Some(columns.to_owned()),
+                ..EnvValues::default()
+            };
+
+            Ok(Config::resolve(env, file).width())
+        };
+
+        assert_eq!(width_with("", "94")?, 90);
+        assert_eq!(width_with("padding = 0", "94")?, 90);
+        assert_eq!(width_with("padding = 1", "94")?, 88);
+        assert_eq!(width_with("padding = 2", "94")?, 86);
+        assert_eq!(width_with("padding = 20", "94")?, 50);
+        assert_eq!(width_with("padding = 20", "40")?, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn theme_keys_resolve_into_the_theme() -> Result<(), Box<dyn Error>> {
+        let dir = tempdir()?;
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r##"
+usage_style = "dots"
+layout = "stacked"
+
+[meter]
+width = 20
+filled = "#"
+empty = "."
+show_percentage = false
+show_reset = false
+
+[colors]
+folder = "#010203"
+branch = "#0A0B0C"
+model = "#ffffff"
+tokens = "#000000"
+levels = ["#000001", "#000002", "#000003", "#000004"]
+thresholds = [0, 1, 100]
+"##,
+        )?;
+
+        let (file, diagnostic) = read_config_file(&path);
+        let config = Config::resolve(EnvValues::default(), file);
+
+        assert_eq!(diagnostic, None);
+        assert_eq!(
+            config.theme(),
+            &Theme {
+                layout: Layout::Stacked,
+                meter: MeterTheme {
+                    style: MeterStyle::Dots,
+                    width: 20,
+                    filled: "#".to_owned(),
+                    empty: ".".to_owned(),
+                    show_percentage: false,
+                    show_reset: false,
+                },
+                colors: Palette {
+                    folder: Rgb(1, 2, 3),
+                    branch: Rgb(10, 11, 12),
+                    model: Rgb(255, 255, 255),
+                    tokens: Rgb(0, 0, 0),
+                    levels: Some([Rgb(0, 0, 1), Rgb(0, 0, 2), Rgb(0, 0, 3), Rgb(0, 0, 4)]),
+                    thresholds: [0, 1, 100],
+                },
+            }
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn absent_theme_keys_keep_style_defaults() -> Result<(), Box<dyn Error>> {
+        let dir = tempdir()?;
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[meter]\nwidth = 1\n[colors]\nmodel = \"#010203\"\n")?;
+
+        let (file, diagnostic) = read_config_file(&path);
+        let env = EnvValues {
+            usage_style: Some("dots".to_owned()),
+            ..EnvValues::default()
+        };
+        let theme = Config::resolve(env, file).theme().clone();
+
+        assert_eq!(diagnostic, None);
+        assert_eq!(theme.layout, Layout::Auto);
+        assert_eq!(theme.meter.width, 1);
+        assert_eq!(
+            (theme.meter.filled.as_str(), theme.meter.empty.as_str()),
+            ("●", "○")
+        );
+        assert!(theme.meter.show_percentage && theme.meter.show_reset);
+        assert_eq!(theme.colors.model.to_string(), "\u{1b}[38;2;1;2;3m");
+        assert_eq!(theme.colors.folder.to_string(), "\u{1b}[38;2;100;220;255m");
+        assert_eq!(theme.colors.levels, None);
+        assert_eq!(theme.colors.thresholds, [50, 70, 90]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_theme_keys_ignore_the_whole_file_with_a_diagnostic() -> Result<(), Box<dyn Error>> {
+        let invalid_contents = [
+            "padding = 21",
+            "padding = -1",
+            "padding = \"2\"",
+            "layout = \"wide\"",
+            "[meter]\nwidth = 0",
+            "[meter]\nwidth = 21",
+            "[meter]\nwidth = -1",
+            "[meter]\nfilled = \"\"",
+            "[meter]\nempty = \"\\t\"",
+            "[meter]\nshow_reset = \"no\"",
+            "[colors]\nfolder = \"#12345G\"",
+            "[colors]\nbranch = \"#12345\"",
+            "[colors]\nmodel = \"123456\"",
+            "[colors]\nlevels = [\"#000000\", \"#000000\", \"#000000\"]",
+            "[colors]\nthresholds = [70, 50, 90]",
+            "[colors]\nthresholds = [50, 50, 90]",
+            "[colors]\nthresholds = [50, 70, 101]",
+        ];
+
+        for contents in invalid_contents {
+            let dir = tempdir()?;
+            let path = dir.path().join("config.toml");
+            std::fs::write(&path, format!("usage_style = \"dots\"\n{contents}\n"))?;
+
+            let (file, diagnostic) = read_config_file(&path);
+            let config = Config::resolve(EnvValues::default(), file);
+
+            assert_eq!(
+                config.theme().meter.style,
+                MeterStyle::Bar,
+                "contents: {contents}"
+            );
+            assert_eq!(config.theme().meter.width, 10, "contents: {contents}");
+            let diagnostic = diagnostic
+                .ok_or_else(|| format!("expected a diagnostic for contents: {contents}"))?;
+            assert!(
+                diagnostic.contains(&path.display().to_string()),
+                "diagnostic {diagnostic:?} should mention the path for contents: {contents}"
+            );
+        }
+
+        Ok(())
     }
 }
