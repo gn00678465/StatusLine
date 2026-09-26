@@ -88,10 +88,9 @@ where
             Err(_) => return false,
         };
 
-        self.clock
-            .now_epoch()
-            .checked_sub(modified_at)
-            .is_some_and(|age| age < CACHE_TTL_SECONDS)
+        // A write that lands in the second after the clock reading, or clock skew,
+        // puts mtime ahead of now; v1's `now - mtime < ttl` treats that as fresh.
+        self.clock.now_epoch().saturating_sub(modified_at) < CACHE_TTL_SECONDS
     }
 }
 
@@ -260,6 +259,40 @@ mod tests {
             "\nUpdate available: v999.0.1 → https://github.com/gn00678465/StatusLine"
         );
         assert_eq!(rendered.matches('\u{001b}').count(), 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn treats_a_cache_modified_after_the_clock_reading_as_fresh() -> Result<(), Box<dyn Error>> {
+        let home = tempdir()?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let cache_dir = CacheDir::from_paths(None, Some(home.path()));
+        assert!(cache_dir.atomic_write(super::CACHE_NAME, br#"{"tag_name":"v999.0.0"}"#));
+        let cache_path = cache_dir
+            .path()
+            .ok_or("missing safe cache directory")?
+            .join(super::CACHE_NAME);
+        let cache_file = std::fs::OpenOptions::new().write(true).open(cache_path)?;
+        let later = UNIX_EPOCH + Duration::from_secs(now + 5);
+        cache_file.set_times(std::fs::FileTimes::new().set_modified(later))?;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let checker = UpdateChecker::new(
+            MockHttp {
+                response: Some(r#"{"tag_name":"v1000.0.0"}"#.to_owned()),
+                calls: Arc::clone(&calls),
+            },
+            cache_dir,
+            FixedClock { now },
+        );
+
+        let rendered = checker.check();
+
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            strip_ansi(&rendered),
+            "\nUpdate available: v999.0.0 → https://github.com/gn00678465/StatusLine"
+        );
 
         Ok(())
     }

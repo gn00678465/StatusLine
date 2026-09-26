@@ -275,10 +275,9 @@ where
             Err(_) => return false,
         };
 
-        self.clock
-            .now_epoch()
-            .checked_sub(modified_at)
-            .is_some_and(|age| age < CACHE_TTL_SECONDS)
+        // A write that lands in the second after the clock reading, or clock skew,
+        // puts mtime ahead of now; v1's `now - mtime < ttl` treats that as fresh.
+        self.clock.now_epoch().saturating_sub(modified_at) < CACHE_TTL_SECONDS
     }
 
     fn config_dir(&self) -> PathBuf {
@@ -736,6 +735,46 @@ mod tests {
         assert!(fetcher.fetch().is_some());
         assert!(fetcher.fetch().is_some());
         assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn treats_a_usage_cache_modified_after_the_clock_reading_as_fresh() -> Result<(), Box<dyn Error>>
+    {
+        let home = tempdir()?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let config_dir = Path::new("/custom/claude");
+        let cache_name = cache_entry_name(config_dir);
+        let cache_dir = CacheDir::from_paths(None, Some(home.path()));
+        assert!(cache_dir.atomic_write(&cache_name, VALID_USAGE.as_bytes()));
+        let cache_path = cache_dir
+            .path()
+            .ok_or("missing safe cache directory")?
+            .join(&cache_name);
+        let cache_file = std::fs::OpenOptions::new().write(true).open(cache_path)?;
+        let later = UNIX_EPOCH + std::time::Duration::from_secs(now + 5);
+        cache_file.set_times(std::fs::FileTimes::new().set_modified(later))?;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetcher = OAuthUsageFetcher::new(
+            MockCredentials {
+                environment: Some("environment-token".to_owned()),
+                keychain: None,
+                file: None,
+                secret_tool: None,
+            },
+            MockHttp {
+                expected_token: "environment-token".to_owned(),
+                response: VALID_USAGE.to_owned(),
+                calls: Arc::clone(&calls),
+            },
+            cache_dir,
+            Some(config_dir.to_path_buf()),
+            FixedClock { now },
+        );
+
+        assert!(fetcher.fetch().is_some());
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
 
         Ok(())
     }
