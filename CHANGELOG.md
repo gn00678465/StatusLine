@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [v2.2.0] - 2026-09-26
+
 ### Added
 
 - 設定檔新增外觀設定，全部只能在設定檔中設定，不新增環境變數：
@@ -25,17 +27,27 @@
     meter 的四段顏色 `levels` 與門檻 `thresholds`（預設 `[50, 70, 90]`）。
     未設定 `levels` 時保留 bar 與 dots 原本的顏色順序，`extra` 區塊使用 bar
     的顏色順序。
-- 新的鍵在解析時驗證。`padding` 超出 0–20、顏色不是 `#RRGGBB`、`width`
-  超出 1–20、glyph 是空字串或含控制字元、`thresholds` 沒有嚴格遞增或大於
-  100 時，整份設定檔忽略並於 stderr 印出一行提示，與其他格式錯誤相同。
+- 新的鍵在解析時驗證。`padding` 超出 0–20、`layout` 不是 `auto`／`stacked`、
+  顏色不是 `#RRGGBB`、`width` 超出 1–20、glyph 是空字串或含控制字元、
+  `levels` 不是 4 個顏色、`thresholds` 不是 3 個嚴格遞增且不大於 100 的值時，
+  整份設定檔忽略並於 stderr 印出一行提示，與其他格式錯誤相同。
+
+### Fixed
+
+- update 與 OAuth usage cache 的檔案 mtime 晚於目前時間時（寫入落在讀取時鐘
+  後的下一秒，或時鐘偏移），原本會判為過期而多發一次請求；現在與 v1 相同，
+  視為有效快取。
 
 ### Notes
 
+- 在 Claude Code 設定了 `statusLine.padding` 的使用者，請在設定檔加上相同的
+  `padding`，否則可用寬度會多算 `2 × padding` 欄。
 - 沒有設定檔，或設定檔只有 `usage_style`／`git_cache_ttl` 時，外觀與
   v2.1.0 相同，只有換行位置不同（見下一項）。
 - `auto` 現在會扣除 Claude Code 的邊界欄位（左右各 2 欄，再加上左右各
   `padding` 欄）。接近右緣的行會比 v2.1.0 更早換行；`└─` 行也放不下時，
   改為輸出三行。
+- Cargo、npm installer 與 POSIX installer 版本同步至 `2.2.0`。（#12）
 
 ## [v2.1.0] - 2026-09-06
 
@@ -186,7 +198,8 @@
 - 初始 status line 實作：workspace、Git、model、effort、context、5h/7d/extra
   rate limits、折行與更新檢查。
 
-[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v2.2.0...HEAD
+[v2.2.0]: https://github.com/gn00678465/StatusLine/compare/v2.1.0...v2.2.0
 [v2.1.0]: https://github.com/gn00678465/StatusLine/compare/v2.0.1...v2.1.0
 [v2.0.1]: https://github.com/gn00678465/StatusLine/compare/v2.0.0...v2.0.1
 [v2.0.0]: https://github.com/gn00678465/StatusLine/compare/v1.2.2...v2.0.0

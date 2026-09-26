@@ -1,6 +1,6 @@
 # cc-statusline
 
-Version **2.1.0** is a single Rust binary for the Claude Code status line. It
+Version **2.2.0** is a single Rust binary for the Claude Code status line. It
 keeps the v1 layout while removing the runtime dependency on shell, `jq`, and
 network command-line tools. A redraw is safe to run at 1 Hz: cached work stays
 local, and network/keychain refreshes are bounded and fail closed.
@@ -106,9 +106,9 @@ value (see [Line width](#line-width)).
 ## Output
 
 The line contains workspace/Git, model/effort, context, cache TTL, and rate
-limits. A line that does not fit the pane wraps to two or three lines. The
-`bar` and `dots` meters use the same ten positions and color thresholds
-across context and limits.
+limits. A line that does not fit the pane wraps to two or three lines. Every
+meter (context and limits) uses the same cell count, ten by default, and the
+same color thresholds; `bar` and `dots` differ only in glyphs and color order.
 
 ```text
 📁 project › 🌿 feat/status [S1|W2] │ 🤖 Opus 4.7 · 🧠 high │ ⚡️ 96k/200k (▓▓▓▓▓░░░░░ 48%) · Cache 94% 56:41 · 📊 5h: ▓▓░░░░░░░░ 20% @15:00 · 7d: ▓▓▓▓▓░░░░░ 50% @Apr 24, 08:00 · Team model: ▓▓▓░░░░░░░ 30% @Apr 24, 08:00 · extra: $1.23/$10.00
@@ -128,10 +128,12 @@ across context and limits.
 
 `~/.config/cc-statusline/config.toml` (or `$XDG_CONFIG_HOME/cc-statusline/config.toml`
 when that variable is set and non-empty) is an optional, user-created file —
-cc-statusline never creates, writes, or requires it. Per key, a non-empty
-environment variable wins over the file, which wins over the built-in
-default; an environment variable that is already set keeps working even
-when the file itself is ignored below.
+cc-statusline never creates, writes, or requires it. Only `usage_style` and
+`git_cache_ttl` also have environment variables; for those two keys a
+non-empty environment variable wins over the file, which wins over the
+built-in default, and an environment variable that is already set keeps
+working even when the file itself is ignored below. Every other key is read
+from the file only.
 
 ```toml
 # ~/.config/cc-statusline/config.toml
@@ -190,23 +192,25 @@ To make the limit line shorter in a narrow pane, set `width = 5` and
 
 When `levels` is not set, meters keep the built-in color order for the
 current style (bar: green, yellow, orange, red; dots: green, orange, yellow,
-red), and the `extra` usage block uses the bar order. `thresholds` also
-applies to the `extra` block. Colors that are not in `[colors]` (effort,
-Git `S`/`W`/`C` counts, cache TTL, dim separators) do not change.
+red), and the `extra` usage block uses the bar order. `levels` and
+`thresholds` also apply to the `extra` block. Colors that are not in
+`[colors]` (effort, Git `S`/`W`/`C` counts, cache hit rate and TTL, dim
+separators) do not change.
 
 `COLUMNS` cannot be set from the file — it is a terminal property, not a
-preference. A missing file is silent. A value of the right TOML type but out
-of range reuses that key's own existing validation rule instead of causing
-the file to be ignored: `usage_style = "foo"` falls back to `bar` (the only
-rule `usage_style` has), while `git_cache_ttl = 99` is *clamped* to `60`
-rather than falling back to the `2`-second default. Only a file that fails
-to parse at all — bad TOML syntax, a value of the wrong type
-(`usage_style = 1`, `git_cache_ttl = "2"`, `git_cache_ttl = -1`), a
-`padding` outside 0-20, or an invalid `layout`, `[meter]`, or `[colors]`
-value (a color that is not `#RRGGBB`, `width` outside 1-20, an empty glyph
-or one with a control character, `thresholds` that are not strictly
-ascending or are above 100) — is ignored in full: every key falls back to its default, and one line is printed to
-stderr (`cc-statusline: ignoring config file <path>: <error>`). stdout and
+preference. A missing file is silent. `usage_style` and `git_cache_ttl`
+accept any value of the right TOML type and apply their own fallback rule:
+`usage_style = "foo"` falls back to `bar`, while `git_cache_ttl = 99` is
+*clamped* to `60` rather than falling back to the `2`-second default. Every
+other key is checked strictly. A file is ignored in full when it has bad
+TOML syntax, a value of the wrong type (`usage_style = 1`,
+`git_cache_ttl = "2"`, `git_cache_ttl = -1`), a `padding` outside 0-20, a
+`layout` other than `auto` or `stacked`, or an invalid `[meter]` or
+`[colors]` value (a color that is not `#RRGGBB`, `width` outside 1-20, an
+empty glyph or one with a control character, `levels` without exactly four
+colors, `thresholds` without exactly three values that are strictly
+ascending and at most 100). Then every key falls back to its default, and
+one line is printed to stderr (`cc-statusline: ignoring config file <path>: <error>`). stdout and
 the exit code are never affected. Unknown keys in the file are ignored, so
 an older binary can read a config file written by a newer one. The file is
 capped at 16 KiB; a larger file is treated the same as a malformed one —
