@@ -18,15 +18,17 @@ use std::path::{Path, PathBuf};
 use cachedir::{CacheDir, Clock, SystemClock};
 use config::Config;
 use gitstatus::{CommandGitRunner, GitRunner, GitStatus, GitStatusCollector};
+use input::HostKind;
 use oauth::{
     CredentialStore, HttpClient, OAuthUsageFetcher, SystemCredentialStore, UreqHttpClient,
 };
-use render::blocks::ContextUsage;
+use render::blocks::{AgyStatusInfo, ContextUsage};
 use render::limits::{
-    render_limits, BuiltInLimit, BuiltInLimits, LimitRenderContext, LocalOffset, SystemLocalOffset,
+    render_agy_limits, render_limits, AgyQuotaRenderContext, BuiltInLimit, BuiltInLimits,
+    LimitRenderContext, LocalOffset, SystemLocalOffset,
 };
 use render::{render, RenderContext};
-use ttl::{CacheTtl, TokenUsage};
+use ttl::{CacheTtl, CacheTtlStatus, TokenUsage};
 use update::UpdateChecker;
 
 const FALLBACK_OUTPUT: &str = "Claude";
@@ -55,7 +57,12 @@ fn render_system_input(input: &str) -> String {
     };
     let app = StatusLineApp::system();
 
-    app.render_status(&parsed_input)
+    let rendered = app.render_status(&parsed_input);
+    if rendered.is_empty() {
+        parsed_input.fallback_name().to_owned()
+    } else {
+        rendered
+    }
 }
 
 struct StatusLineApp<R, S, H, C, O> {
@@ -109,28 +116,70 @@ where
     fn render_status(&self, parsed_input: &input::StatusInput) -> String {
         let session_id = session_key(parsed_input);
         let git_status = self.collect_git_status(parsed_input, &session_id);
-        let cache_status = CacheTtl::new(self.cache_dir.clone(), &session_id, self.clock.clone())
-            .update(TokenUsage {
-                input_tokens: parsed_input.input_tokens(),
-                cache_creation_tokens: parsed_input.cache_creation_input_tokens(),
-                cache_read_tokens: parsed_input.cache_read_input_tokens(),
-            });
-        let oauth_usage = OAuthUsageFetcher::new(
-            self.credentials.clone(),
-            self.http.clone(),
-            self.cache_dir.clone(),
-            self.configured_dir.clone(),
-            self.clock.clone(),
-        )
-        .fetch();
-        let limits = render_limits(
-            LimitRenderContext {
-                builtin: built_in_limits(parsed_input),
-                oauth: oauth_usage.as_ref(),
-                theme: self.config.theme(),
+        let token_usage = TokenUsage {
+            input_tokens: parsed_input.input_tokens(),
+            cache_creation_tokens: parsed_input.cache_creation_input_tokens(),
+            cache_read_tokens: parsed_input.cache_read_input_tokens(),
+        };
+        let host = parsed_input.host_kind();
+        let cache_status = match host {
+            HostKind::ClaudeCode => {
+                CacheTtl::new(self.cache_dir.clone(), &session_id, self.clock.clone())
+                    .update(token_usage)
+            }
+            HostKind::Antigravity => CacheTtlStatus {
+                hit_rate: token_usage.hit_rate().filter(|_| {
+                    token_usage.cache_read_tokens > 0 || token_usage.cache_creation_tokens > 0
+                }),
+                ttl: None,
             },
-            &self.offset,
-        );
+        };
+        let limits = match host {
+            HostKind::ClaudeCode => {
+                let oauth_usage = OAuthUsageFetcher::new(
+                    self.credentials.clone(),
+                    self.http.clone(),
+                    self.cache_dir.clone(),
+                    self.configured_dir.clone(),
+                    self.clock.clone(),
+                )
+                .fetch();
+                render_limits(
+                    LimitRenderContext {
+                        builtin: built_in_limits(parsed_input),
+                        oauth: oauth_usage.as_ref(),
+                        theme: self.config.theme(),
+                    },
+                    &self.offset,
+                )
+            }
+            HostKind::Antigravity => render_agy_limits(
+                AgyQuotaRenderContext {
+                    quotas: parsed_input.quotas(),
+                    now_epoch: self.clock.now_epoch(),
+                    theme: self.config.theme(),
+                },
+                &self.offset,
+            ),
+        };
+        let agy_status = (host == HostKind::Antigravity).then(|| {
+            let subagents = parsed_input.subagents();
+            let cost = parsed_input.cost();
+            AgyStatusInfo {
+                agent_state: parsed_input.agent_state(),
+                cycle_mode: parsed_input.cycle_mode(),
+                sandbox_enabled: parsed_input.sandbox_enabled(),
+                subagents_running: subagents.running,
+                subagents_total: subagents.total,
+                task_count: parsed_input.task_count(),
+                artifact_count: parsed_input.artifact_count(),
+                pending_input_count: parsed_input.pending_input_count(),
+                tool_confirmation_pending: parsed_input.tool_confirmation_pending(),
+                vim_mode: parsed_input.vim_mode(),
+                cost_usd: cost.map(|cost| cost.total_usd),
+                cost_estimated: cost.is_some_and(|cost| cost.estimated),
+            }
+        });
         let status_line = render(RenderContext {
             cwd: parsed_input.cwd(),
             git_status: &git_status,
@@ -144,9 +193,10 @@ where
                 official_percentage: parsed_input.context_used_percentage(),
             },
             cache_status,
+            agy_status,
             limits: &limits,
             theme: self.config.theme(),
-            width: self.config.width(),
+            width: self.config.width_for_host(parsed_input.terminal_width()),
         });
         let update_line = UpdateChecker::new(
             self.http.clone(),
@@ -470,6 +520,34 @@ mod tests {
 
         assert_eq!(session_key(&cwd_fallback), "/work/project");
         assert_eq!(session_key(&no_cwd_fallback), "no-cwd");
+
+        Ok(())
+    }
+
+    #[test]
+    fn snapshots_antigravity_fixture_without_calling_claude_oauth() -> Result<(), Box<dyn Error>> {
+        let home = tempdir()?;
+        let app = StatusLineApp::new(
+            MockGit,
+            MockCredentials,
+            MockHttp,
+            CacheDir::from_paths(None, Some(home.path())),
+            FixedClock,
+            UtcOffset,
+            Config::from_values(Some("dots"), Some("2"), None, 0),
+        );
+        let rendered =
+            strip_ansi(&app.render_input(include_str!("../tests/fixtures/status-input-agy.json")));
+
+        assert_snapshot!(
+            rendered,
+            @r###"
+📁 mock-project › 🌿 integration [S1|W1] │ 🤖 Gemini 4 Argon · 🧠 med
+└─ ⚡️ 84k/1.0m (●○○○○○○○○○ 14%) · Cache 25% · ● idle · 📋 mode:plan · 🕒 1 task · 📄 2 · $0.42 · 📊 7d: ○○○○○○○○○○ 6% @Mar 24, 17:46
+"###
+        );
+        assert!(!rendered.contains("Other:"));
+        assert!(!rendered.contains("60:00"));
 
         Ok(())
     }

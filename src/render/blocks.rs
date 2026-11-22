@@ -1,10 +1,103 @@
 //! Renders individual status-line blocks.
 
-use super::color::{BRIGHT_RED, DIM, GRAY, GREEN, ORANGE, RED, RESET, YELLOW};
+use super::color::{BLUE, BRIGHT_RED, CYAN, DIM, GRAY, GREEN, ORANGE, RED, RESET, YELLOW};
 use super::meter::render_meter;
 use super::theme::{Palette, Theme};
 use crate::gitstatus::GitStatus;
 use crate::ttl::{CacheTtlStatus, TtlColor, TtlDisplay};
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AgyStatusInfo<'a> {
+    pub agent_state: Option<&'a str>,
+    pub cycle_mode: Option<&'a str>,
+    pub sandbox_enabled: bool,
+    pub subagents_running: usize,
+    pub subagents_total: usize,
+    pub task_count: u64,
+    pub artifact_count: u64,
+    pub pending_input_count: u64,
+    pub tool_confirmation_pending: bool,
+    pub vim_mode: Option<&'a str>,
+    pub cost_usd: Option<f64>,
+    pub cost_estimated: bool,
+}
+
+pub fn render_agy_header_badges(info: &AgyStatusInfo<'_>) -> Vec<String> {
+    let mut badges = Vec::new();
+
+    if let Some(vim_mode) = info.vim_mode {
+        badges.push(format!("{DIM}[{vim_mode}]{RESET}"));
+    }
+
+    badges
+}
+
+pub fn render_agy_usage_blocks(info: &AgyStatusInfo<'_>) -> Vec<String> {
+    let mut blocks = Vec::new();
+
+    if let Some(state) = info.agent_state {
+        let badge = match state {
+            "idle" => format!("{GREEN}● idle{RESET}"),
+            "working" => format!("{CYAN}● working{RESET}"),
+            "tool_use" => format!("{YELLOW}🔧 tool{RESET}"),
+            "reviewing" => format!("{BLUE}👀 review{RESET}"),
+            "authenticating" => format!("{YELLOW}🔑 auth{RESET}"),
+            "initializing" => format!("{DIM}● init{RESET}"),
+            "error" => format!("{RED}🔴 error{RESET}"),
+            other => format!("{DIM}● {other}{RESET}"),
+        };
+        blocks.push(badge);
+    }
+
+    if let Some(cycle_mode) = info.cycle_mode {
+        let badge = match cycle_mode {
+            "plan" => format!("{CYAN}📋 mode:plan{RESET}"),
+            "auto" => format!("{YELLOW}🔄 mode:auto{RESET}"),
+            "accept-edits" => format!("{GREEN}📝 mode:edits{RESET}"),
+            other => format!("{DIM}mode:{other}{RESET}"),
+        };
+        blocks.push(badge);
+    }
+
+    if info.tool_confirmation_pending {
+        blocks.push(format!("{YELLOW}🔔 confirm{RESET}"));
+    }
+
+    if info.sandbox_enabled {
+        blocks.push(format!("{GREEN}🔒 sandbox{RESET}"));
+    }
+
+    if info.subagents_total > 0 {
+        let text = if info.subagents_running > 0 {
+            format!(
+                "{CYAN}🔀 {}/{} sub{RESET}",
+                info.subagents_running, info.subagents_total
+            )
+        } else {
+            format!("{DIM}🔀 {} sub{RESET}", info.subagents_total)
+        };
+        blocks.push(text);
+    }
+
+    if info.task_count > 0 {
+        blocks.push(format!("{CYAN}🕒 {} task{RESET}", info.task_count));
+    }
+
+    if info.artifact_count > 0 {
+        blocks.push(format!("{DIM}📄 {}{RESET}", info.artifact_count));
+    }
+
+    if info.pending_input_count > 0 {
+        blocks.push(format!("{YELLOW}💬 {}{RESET}", info.pending_input_count));
+    }
+
+    if let Some(cost_usd) = info.cost_usd {
+        let prefix = if info.cost_estimated { "~" } else { "" };
+        blocks.push(format!("{DIM}{prefix}${cost_usd:.2}{RESET}"));
+    }
+
+    blocks
+}
 
 pub fn format_tokens(tokens: u64) -> String {
     if tokens >= 1_000_000 {

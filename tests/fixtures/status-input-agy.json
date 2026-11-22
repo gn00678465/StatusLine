@@ -1,0 +1,52 @@
+{
+  "cwd": "/tmp/mock-project",
+  "session_id": "12345678-abcd-ef01-2345-6789abcdef01",
+  "conversation_id": "12345678-abcd-ef01-2345-6789abcdef01",
+  "model": {
+    "id": "Gemini 4 Argon (Medium)",
+    "display_name": "Gemini 4 Argon (Medium)",
+    "effort": "medium"
+  },
+  "workspace": {
+    "current_dir": "/tmp/mock-project",
+    "project_dir": "/tmp/mock-project"
+  },
+  "version": "1.5.14",
+  "context_window": {
+    "total_input_tokens": 88244,
+    "total_output_tokens": 61074,
+    "context_window_size": 1048576,
+    "used_percentage": 14.24,
+    "remaining_percentage": 85.76,
+    "current_usage": {
+      "input_tokens": 63382,
+      "output_tokens": 346,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 20857
+    }
+  },
+  "product": "antigravity",
+  "quota": {
+    "gemini-weekly": {
+      "remaining_fraction": 0.9378,
+      "reset_time": "2030-03-24T17:46:40Z",
+      "reset_in_seconds": 560580
+    }
+  },
+  "agent_state": "idle",
+  "vcs": {
+    "type": "git"
+  },
+  "cycle_mode": "plan",
+  "sandbox": {
+    "enabled": false
+  },
+  "artifact_count": 2,
+  "task_count": 1,
+  "terminal_width": 140,
+  "cost": {
+    "total_usd": 0.4213,
+    "subagent_usd": 0,
+    "estimated": false
+  }
+}

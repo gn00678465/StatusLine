@@ -197,6 +197,8 @@ pub(crate) struct Config {
     git_cache_ttl_seconds: u64,
     /// Columns Claude Code shows before it cuts the line with `…`.
     width: usize,
+    margin: usize,
+    has_env_columns: bool,
 }
 
 impl Config {
@@ -205,6 +207,7 @@ impl Config {
         let git_cache_ttl =
             non_empty(env.git_cache_ttl).or_else(|| file.git_cache_ttl.map(|ttl| ttl.to_string()));
         let columns = non_empty(env.columns);
+        let has_env_columns = columns.is_some();
         let base = Self::from_values(
             usage_style.as_deref(),
             git_cache_ttl.as_deref(),
@@ -214,6 +217,7 @@ impl Config {
 
         Self {
             theme: overlay_theme(base.theme, file.layout, file.meter, file.colors),
+            has_env_columns,
             ..base
         }
     }
@@ -249,6 +253,8 @@ impl Config {
             theme: Theme::new(parse_usage_style(usage_style)),
             git_cache_ttl_seconds: parse_git_cache_ttl(git_cache_ttl),
             width: parse_columns(columns).saturating_sub(margin),
+            margin,
+            has_env_columns: columns.is_some_and(|value| !value.is_empty()),
         }
     }
 
@@ -260,8 +266,19 @@ impl Config {
         self.git_cache_ttl_seconds
     }
 
+    #[cfg(test)]
     pub(crate) fn width(&self) -> usize {
         self.width
+    }
+
+    pub(crate) fn width_for_host(&self, host_terminal_width: Option<usize>) -> usize {
+        if self.has_env_columns {
+            self.width
+        } else if let Some(terminal_width) = host_terminal_width {
+            terminal_width.saturating_sub(self.margin)
+        } else {
+            self.width
+        }
     }
 }
 

@@ -10,7 +10,10 @@ use crate::gitstatus::GitStatus;
 use crate::ttl::CacheTtlStatus;
 use crate::width::display_width;
 
-use self::blocks::{render_cache, render_context, render_model, render_workspace, ContextUsage};
+use self::blocks::{
+    render_agy_header_badges, render_agy_usage_blocks, render_cache, render_context, render_model,
+    render_workspace, AgyStatusInfo, ContextUsage,
+};
 use self::color::{DIM, RESET};
 use self::theme::{Layout, Theme};
 
@@ -21,6 +24,7 @@ pub struct RenderContext<'a> {
     pub effort_level: Option<&'a str>,
     pub context_usage: ContextUsage,
     pub cache_status: CacheTtlStatus,
+    pub agy_status: Option<AgyStatusInfo<'a>>,
     pub limits: &'a str,
     pub theme: &'a Theme,
     /// Columns left after Claude Code's margins and `padding`.
@@ -30,22 +34,32 @@ pub struct RenderContext<'a> {
 pub fn render(context: RenderContext<'_>) -> String {
     let theme = context.theme;
     let workspace = render_workspace(context.cwd, context.git_status, &theme.colors);
-    let model = render_model(context.model_name, context.effort_level, &theme.colors);
+    let mut model = render_model(context.model_name, context.effort_level, &theme.colors);
+    let separator = format!(" {DIM}·{RESET} ");
+    if let Some(agy) = context.agy_status.as_ref() {
+        let header_badges = render_agy_header_badges(agy);
+        if !header_badges.is_empty() {
+            model.push_str(&separator);
+            model.push_str(&header_badges.join(&separator));
+        }
+    }
     let header = match workspace {
         Some(workspace) => format!("{workspace} {DIM}│{RESET} {model}"),
         None => model,
     };
-    let separator = format!(" {DIM}·{RESET} ");
     let context_block = render_context(context.context_usage, theme);
     let cache_block = render_cache(context.cache_status);
     let mut usage_blocks = vec![context_block];
     if !cache_block.is_empty() {
         usage_blocks.push(cache_block);
     }
+    if let Some(agy) = context.agy_status.as_ref() {
+        usage_blocks.extend(render_agy_usage_blocks(agy));
+    }
 
     let usage_block = usage_blocks.join(&separator);
     let limits = context.limits;
-    if theme.layout == Layout::Stacked {
+    if theme.layout == Layout::Stacked && !limits.is_empty() {
         return stacked(&header, &usage_block, limits);
     }
 
@@ -112,6 +126,7 @@ mod tests {
                     color: TtlColor::Green,
                 }),
             },
+            agy_status: None,
             limits: "",
             theme: &Theme::new(MeterStyle::Bar),
             width: 100,
@@ -146,6 +161,7 @@ mod tests {
                 hit_rate: None,
                 ttl: None,
             },
+            agy_status: None,
             limits: "",
             theme: &Theme::new(MeterStyle::Dots),
             width: 100,
@@ -174,6 +190,7 @@ mod tests {
                 hit_rate: None,
                 ttl: None,
             },
+            agy_status: None,
             limits: "",
             theme: &Theme::new(MeterStyle::Dots),
             width: 1,
@@ -204,6 +221,7 @@ mod tests {
                 hit_rate: None,
                 ttl: None,
             },
+            agy_status: None,
             limits: "📊 5h: - · 7d: -",
             theme: &Theme::new(MeterStyle::Bar),
             width: 100,
@@ -245,6 +263,7 @@ mod tests {
                     color: TtlColor::Green,
                 }),
             },
+            agy_status: None,
             limits: "📊 5h: - · 7d: -",
             theme: &theme,
             width: 1_000,
@@ -284,6 +303,7 @@ mod tests {
                 hit_rate: None,
                 ttl: None,
             },
+            agy_status: None,
             limits: "📊 5h: - · 7d: -",
             theme: &theme,
             width,
