@@ -268,3 +268,30 @@ fn renders_fallback_for_empty_input() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[test]
+fn renders_antigravity_input_using_config_file_and_terminal_width() -> Result<(), Box<dyn Error>> {
+    let (mut command, home, _claude_config_dir) = isolated_command()?;
+    write_config_file(&home, "usage_style = \"dots\"\n")?;
+
+    let mut child = command.spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(include_bytes!("fixtures/status-input-agy.json"))?;
+    }
+    let output = child.wait_with_output()?;
+    let stdout = String::from_utf8(output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(output.status.success());
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+    assert!(stdout.contains("Gemini 4 Argon"), "stdout: {stdout}");
+    assert!(!stdout.contains("(Medium)"), "stdout: {stdout}");
+    assert!(stdout.contains("med"), "stdout: {stdout}");
+    assert!(stdout.contains("7d:"), "stdout: {stdout}");
+    assert!(
+        stdout.contains('\u{25cf}') || stdout.contains('\u{25cb}'),
+        "stdout: {stdout}"
+    );
+
+    Ok(())
+}

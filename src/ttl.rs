@@ -112,7 +112,7 @@ impl TokenUsage {
         )
     }
 
-    fn hit_rate(self) -> Option<u8> {
+    pub(crate) fn hit_rate(self) -> Option<u8> {
         let total = u128::from(self.input_tokens)
             + u128::from(self.cache_creation_tokens)
             + u128::from(self.cache_read_tokens);

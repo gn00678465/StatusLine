@@ -1,10 +1,86 @@
 //! Renders rate-limit status blocks.
 
+use crate::input::QuotaBucket;
 use crate::oauth::UsageResponse;
 
 use super::color::{DIM, RESET};
 use super::meter::{render_meter, MeterStyle};
 use super::theme::Theme;
+
+pub(crate) struct AgyQuotaRenderContext<'a> {
+    pub quotas: &'a [QuotaBucket],
+    pub now_epoch: u64,
+    pub theme: &'a Theme,
+}
+
+pub(crate) fn render_agy_limits<O: LocalOffset>(
+    context: AgyQuotaRenderContext<'_>,
+    offset: &O,
+) -> String {
+    let mut blocks = Vec::new();
+
+    for bucket in context.quotas {
+        let reset_style = if bucket
+            .reset_in_seconds
+            .is_some_and(|seconds| seconds <= 86_400)
+        {
+            ResetStyle::Time
+        } else {
+            ResetStyle::DateTime
+        };
+        let reset_at = bucket
+            .reset_time
+            .as_deref()
+            .and_then(|iso| format_iso_reset(iso, reset_style, offset))
+            .or_else(|| {
+                bucket.reset_in_seconds.and_then(|seconds| {
+                    format_epoch_reset(
+                        context.now_epoch.saturating_add(seconds),
+                        reset_style,
+                        offset,
+                    )
+                })
+            });
+
+        if let Some(remaining_fraction) = bucket.remaining_fraction {
+            let used_percentage =
+                ((1.0 - remaining_fraction.clamp(0.0, 1.0)) * 100.0).round() as i64;
+            blocks.push(render_window(
+                &bucket.label,
+                used_percentage,
+                reset_at,
+                context.theme,
+            ));
+        } else if let Some(remaining_amount) = bucket.remaining_amount {
+            let amount_text = format_amount(remaining_amount);
+            let block = match reset_at.filter(|_| context.theme.meter.show_reset) {
+                Some(reset_at) => {
+                    format!(
+                        "{DIM}{}: {RESET}{amount_text} {DIM}@{reset_at}{RESET}",
+                        bucket.label
+                    )
+                }
+                None => format!("{DIM}{}: {RESET}{amount_text}", bucket.label),
+            };
+            blocks.push(block);
+        }
+    }
+
+    if let Some(first_block) = blocks.first_mut() {
+        first_block.insert_str(0, "📊 ");
+    }
+
+    blocks.join(&format!(" {DIM}·{RESET} "))
+}
+
+fn format_amount(amount: f64) -> String {
+    let clamped = amount.max(0.0);
+    if (clamped - clamped.round()).abs() < 0.005 {
+        format!("{:.0}", clamped.round())
+    } else {
+        format!("{clamped:.2}")
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BuiltInLimits {
@@ -707,5 +783,48 @@ mod tests {
             rendered.ends_with("\u{1b}[38;2;3;3;3m$12.50/$100.00\u{1b}[0m"),
             "{rendered:?}"
         );
+    }
+
+    #[test]
+    fn renders_antigravity_quotas_with_used_percentage_and_empty_fallback() {
+        let quotas = vec![
+            crate::input::QuotaBucket {
+                label: "5h".to_owned(),
+                remaining_fraction: Some(0.8),
+                remaining_amount: None,
+                reset_time: None,
+                reset_in_seconds: Some(3_600),
+            },
+            crate::input::QuotaBucket {
+                label: "7d".to_owned(),
+                remaining_fraction: Some(0.9378),
+                remaining_amount: None,
+                reset_time: Some("2030-03-24T17:46:40Z".to_owned()),
+                reset_in_seconds: Some(560_580),
+            },
+        ];
+
+        let rendered = super::render_agy_limits(
+            super::AgyQuotaRenderContext {
+                quotas: &quotas,
+                now_epoch: 1_900_000_000,
+                theme: &Theme::new(MeterStyle::Dots),
+            },
+            &UtcOffset,
+        );
+        assert_eq!(
+            strip_ansi(&rendered),
+            "📊 5h: ●●○○○○○○○○ 20% @18:46 · 7d: ○○○○○○○○○○ 6% @Mar 24, 17:46"
+        );
+
+        let empty = super::render_agy_limits(
+            super::AgyQuotaRenderContext {
+                quotas: &[],
+                now_epoch: 1_900_000_000,
+                theme: &Theme::new(MeterStyle::Dots),
+            },
+            &UtcOffset,
+        );
+        assert!(empty.is_empty());
     }
 }

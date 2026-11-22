@@ -7,6 +7,26 @@
 
 ## [Unreleased]
 
+## [v2.3.0] - 2026-11-22
+
+### Added
+
+- 新增 Antigravity CLI (`agy`) 狀態列支援，同一支 `cc-statusline` 執行檔依
+  stdin `"product": "antigravity"` 自動切換模式，共用 `~/.config/cc-statusline/config.toml`：
+  - 自動剝除 `model.display_name` 尾端括號 effort 字串（如 `(Medium)`、`(High)`），
+    保留 `🧠 <effort>` 圖示區塊，並保留非 effort 括號（如 `(Preview)`）。
+  - 解析 stdin `quota` 的 `gemini-5h` 與 `gemini-weekly`（過濾 `disabled` 與
+    其他 bucket），依已使用百分比渲染為 `5h` 與 `7d` 進度條；不讀取 Claude
+    Code 憑證或呼叫 Anthropic OAuth API。
+  - 支援 `terminal_width`（未設定 `COLUMNS` 時生效），以及 `agent_state`、
+    `cycle_mode`（`mode:` 標示）、`sandbox`、`subagents`、`task_count`、
+    `artifact_count`、`pending_input_count`、`tool_confirmation_pending`、
+    `vim`、`cost` 與無 TTL 倒數的 `Cache` 命中率顯示。
+
+### Notes
+
+- Cargo、npm installer、POSIX installer 與 README 版本同步至 `2.3.0`。（#14）
+
 ## [v2.2.0] - 2026-09-26
 
 ### Added
@@ -198,7 +218,8 @@
 - 初始 status line 實作：workspace、Git、model、effort、context、5h/7d/extra
   rate limits、折行與更新檢查。
 
-[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/gn00678465/StatusLine/compare/v2.3.0...HEAD
+[v2.3.0]: https://github.com/gn00678465/StatusLine/compare/v2.2.0...v2.3.0
 [v2.2.0]: https://github.com/gn00678465/StatusLine/compare/v2.1.0...v2.2.0
 [v2.1.0]: https://github.com/gn00678465/StatusLine/compare/v2.0.1...v2.1.0
 [v2.0.1]: https://github.com/gn00678465/StatusLine/compare/v2.0.0...v2.0.1
