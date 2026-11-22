@@ -1,9 +1,10 @@
 # cc-statusline
 
-Version **2.2.0** is a single Rust binary for the Claude Code status line. It
-keeps the v1 layout while removing the runtime dependency on shell, `jq`, and
-network command-line tools. A redraw is safe to run at 1 Hz: cached work stays
-local, and network/keychain refreshes are bounded and fail closed.
+Version **2.3.0** is a single Rust binary for the Claude Code and
+Antigravity CLI (`agy`) status lines. It keeps the v1 layout while removing the
+runtime dependency on shell, `jq`, and network command-line tools. A redraw is
+safe to run at 1 Hz: cached work stays local, and network/keychain refreshes are
+bounded and fail closed.
 
 ## Install
 
@@ -102,6 +103,29 @@ expanded `%USERPROFILE%` path accepted by the Claude Code host).
 
 If you set `statusLine.padding`, set `padding` in the config file to the same
 value (see [Line width](#line-width)).
+
+### Antigravity CLI settings
+
+Point `statusLine.command` in `~/.gemini/antigravity-cli/settings.json` at the
+same installed binary:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/cc-statusline/cc-statusline",
+    "enabled": true
+  }
+}
+```
+
+On Windows use `~/.claude/cc-statusline/cc-statusline.exe`. When stdin carries
+`"product": "antigravity"`, `cc-statusline` switches to Antigravity mode: it
+strips trailing effort labels such as `(Medium)` from `model.display_name`
+while keeping the `🧠 <effort>` block, renders `gemini-5h` and `gemini-weekly`
+quotas as `5h` and `7d`, skips Anthropic OAuth lookups, uses `terminal_width`
+when `COLUMNS` is unset, and shows active `agent_state`, `cycle_mode`,
+`sandbox`, `subagents`, `task_count`, `artifact_count`, `vim`, and `cost`.
 
 ## Output
 
